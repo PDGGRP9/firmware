@@ -1,8 +1,5 @@
 #include <Arduino.h>
-
-const char* getMessage() {
-  return "Hello World!";
-}
+#include "message.h"
 
 void setup() {
   Serial.begin(9600);
