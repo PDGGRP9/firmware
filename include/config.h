@@ -1,6 +1,10 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
+// MODE TEST D'INTÉGRATION 
+// Décommenter cette ligne si la carte de test n'a pas les capteurs (MAX30102 / MPU6050) connectés
+// #define TEST_INTEGRATION
+
 // Configuration générale
 #define DEV_ID "BRASCO-00"
 #define BLE_DEVICE_NAME "BRASCO-00"
