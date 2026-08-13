@@ -23,21 +23,20 @@ private:
     bool isMoving;
     const float STEP_THRESHOLD = 15.0f;  // Seuil d'accélération
     
-    // Initialisation interne
-    bool initI2C(uint8_t sda, uint8_t scl);
-    bool initMAX30102();
-    bool initMPU6050();
-    
 public:
     SensorManager();
     ~SensorManager();
-    
-    // Initialisation générale
-    bool initialize(uint8_t sda, uint8_t scl);
-    
+
+    bool initI2C(uint8_t sda, uint8_t scl);
+    bool initMAX30102();
+    bool initMPU6050();
+
+    // Met les capteurs en veille avant deep sleep
+    void prepareSleep(); 
+
     // Lecture des capteurs
     void updateReadings();
-    
+
     // Getters
     uint8_t getHeartRate() const { return lastHeartRate; }
     uint8_t getSpO2() const { return lastSpO2; }

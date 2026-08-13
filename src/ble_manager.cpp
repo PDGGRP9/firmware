@@ -1,7 +1,6 @@
 #include "ble_manager.h"
 #include "config.h"
 #include <Arduino.h>
-#include <ArduinoJson.h>
 
 // ==================== INSTANCE GLOBALE POUR LES CALLBACKS ====================
 static BLEManager* g_pBLEManager = nullptr;
@@ -64,35 +63,36 @@ bool BLEManager::initialize() {
   NimBLEService* pService = pServer->createService(SERVICE_UUID);
 
   pCharData = pService->createCharacteristic(
-      CHAR_DATA_UUID,
+      DATA_UUID,
       NIMBLE_PROPERTY::READ_ENC | NIMBLE_PROPERTY::NOTIFY);
 
-  // Valeur initiale : JSON vide
-  JsonDocument doc;
-  doc["device_id"] = DEV_ID;
-  doc["hr"] = 0;
-  doc["spo2"] = 0;
-  doc["steps"] = 0;
-  doc["ts"] = 0;
-
-  char buffer[JSON_BUFFER_SIZE];
-  size_t len = serializeJson(doc, buffer, sizeof(buffer));
-  pCharData->setValue((uint8_t*)buffer, len);
+  // Valeur initiale : payload binaire à zéro (4 bytes)
+  uint8_t initialPayload[4] = {0, 0, 0, 0};
+  pCharData->setValue(initialPayload, sizeof(initialPayload));
 
   Serial.println("[OK] BLE Manager initialisé");
   return true;
 }
 
 // ==================== ADVERTISING ====================
+
 bool BLEManager::startAdvertising() {
   if (advertisingActive) {
     return true;
   }
 
   NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
-  pAdvertising->addServiceUUID(SERVICE_UUID);
-  pAdvertising->setName(BLE_DEVICE_NAME);
-  pAdvertising->enableScanResponse(true);
+
+  // Paquet principal : juste les flags + UUID de service
+  NimBLEAdvertisementData advData;
+  advData.setFlags(0x06); // LE General Discoverable + BR/EDR Not Supported
+  advData.setCompleteServices(NimBLEUUID(SERVICE_UUID));
+  pAdvertising->setAdvertisementData(advData);
+
+  // Scan response : le nom du device (paquet séparé, 31 octets aussi dispo)
+  NimBLEAdvertisementData scanData;
+  scanData.setName(BLE_DEVICE_NAME);
+  pAdvertising->setScanResponseData(scanData);
 
   bool ok = pAdvertising->start();
   if (ok) {
@@ -104,32 +104,27 @@ bool BLEManager::startAdvertising() {
   return ok;
 }
 
-bool BLEManager::stopAdvertising() {
-  NimBLEDevice::stopAdvertising();
-  advertisingActive = false;
-  return true;
-}
-
-// ==================== ENVOI JSON ====================
+// ==================== ENVOI BINAIRE ====================
 void BLEManager::sendSensorData(uint8_t hr, uint8_t spo2, uint32_t steps) {
   if (!deviceConnected || !pCharData) return;
 
-  JsonDocument doc;
-  doc["device_id"] = DEV_ID;
-  doc["hr"]        = hr;
-  doc["spo2"]      = spo2;
-  doc["steps"]     = steps;
-  doc["ts"]        = millis();
+  // Payload binaire : [BPM(1)][SpO2(1)][Steps_LSB(1)][Steps_MSB(1)]
+  // Steps limité à uint16_t (0-65535) pour tenir sur 2 bytes, little-endian
+  uint16_t steps16 = (steps > 65535) ? 65535 : (uint16_t)steps;
 
-  char buffer[JSON_BUFFER_SIZE];
-  size_t len = serializeJson(doc, buffer, sizeof(buffer));
+  uint8_t payload[4];
+  payload[0] = hr;
+  payload[1] = spo2;
+  payload[2] = (uint8_t)((steps16 >> 8) & 0xFF); // MSB (big-endian)
+  payload[3] = (uint8_t)(steps16 & 0xFF);        // LSB (little-endian)
 
-  pCharData->setValue((uint8_t*)buffer, len);
+  pCharData->setValue(payload, sizeof(payload));
   pCharData->notify();
 
   #ifdef DEBUG_BLE
-  Serial.print("[BLE JSON] ");
-  Serial.println(buffer);
+  Serial.printf("[BLE BIN] HR=%u SpO2=%u Steps=%u | Bytes: %02X %02X %02X %02X\n",
+                hr, spo2, steps16,
+                payload[0], payload[1], payload[2], payload[3]);
   #endif
 }
 

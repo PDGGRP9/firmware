@@ -69,35 +69,20 @@ bool SensorManager::initMPU6050() {
     return true;
 }
 
-// ==================== INITIALISATION GÉNÉRALE ====================
-bool SensorManager::initialize(uint8_t sda, uint8_t scl) {
-    Serial.println("\n--- Initialisation Capteurs ---");
-    
-    bool success = true;
-    
-    // Initialiser I2C
-    if (!initI2C(sda, scl)) {
-        Serial.println("[FAIL] Bus I2C non initialisé");
-        return false;
+// ==================== PRÉPARATION À LA VEILLE ====================
+void SensorManager::prepareSleep() {
+    Serial.println("[SensorManager] Préparation à la veille...");
+
+    if (pMAX30102) {
+        pMAX30102->sensorEndCollect();  // Vérifie le nom exact dans la lib DFRobot,
+                                        // sinon utiliser sensorStartCollect(false) selon version
+        Serial.println("[SensorManager] MAX30102 -> arrêt collecte");
     }
-    
-    // Initialiser MAX30102
-    if (!initMAX30102()) {
-        Serial.println("[FAIL] Vérifiez le câblage du MAX30102");
-        success = false;
+
+    if (pMPU6050) {
+        pMPU6050->setSleepEnabled(true);
+        Serial.println("[SensorManager] MPU6050 -> SLEEP");
     }
-    
-    // Initialiser MPU6050
-    if (!initMPU6050()) {
-        Serial.println("[FAIL] Vérifiez le câblage du MPU6050");
-        success = false;
-    }
-    
-    if (success) {
-        Serial.println("[OK] Tous les capteurs initialisés");
-    }
-    
-    return success;
 }
 
 // ==================== MISE À JOUR DES LECTURES ====================
