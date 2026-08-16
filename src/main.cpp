@@ -15,6 +15,9 @@ uint8_t error_code = 0x1;
 unsigned long lastReadTime = 0;
 
 // ==================== BOUTON / LONG PRESS ====================
+// Tout ce bloc dépend du bouton câblé sur D0 : sans HAS_POWER_BUTTON, il n'y a
+// rien à lire et la veille n'est jamais déclenchée.
+#ifdef HAS_POWER_BUTTON
 #define BUTTON_PIN D0
 #define LONG_PRESS_DURATION 3000 // 3 secondes
 
@@ -44,6 +47,7 @@ void checkButtonForSleep() {
     buttonPressed = false;
   }
 }
+#endif // HAS_POWER_BUTTON
 
 // ==================== UTILS ====================
 void logResult(const char* stepName, bool passed, const char* detail) {
@@ -76,7 +80,9 @@ void setup() {
 
   pinMode(LED_BUILTIN, OUTPUT);
   digitalWrite(LED_BUILTIN, LOW);
+#ifdef HAS_POWER_BUTTON
   pinMode(BUTTON_PIN, INPUT);
+#endif
 
   powerManager.init();
 
@@ -124,7 +130,9 @@ void setup() {
 // ==================== LOOP ====================
 void loop() {
   // Vérifier l'appui long à chaque itération, même en cas d'erreur
+#ifdef HAS_POWER_BUTTON
   checkButtonForSleep();
+#endif
 
   // === Gestion des erreurs et réinitialisation ===
   while (!init_success) {
@@ -133,7 +141,9 @@ void loop() {
       delay(200);
       digitalWrite(LED_BUILTIN, HIGH);
       delay(200);
+#ifdef HAS_POWER_BUTTON
       checkButtonForSleep(); // on garde la main sur le bouton même en erreur
+#endif
     }
 
     switch (error_code) {
@@ -201,16 +211,19 @@ void loop() {
     uint8_t spo2 = sensorManager.getSpO2();
     uint32_t steps = sensorManager.getSteps();
 
+    // Les mesures sont toujours affichées sur le série, connecté ou non :
+    // c'est le seul moyen de vérifier les capteurs sans téléphone appairé.
     if (bleManager.isConnected()) {
       bleManager.sendSensorData(hr, spo2, steps);
-      Serial.print("Données envoyées -> HR: ");
-      Serial.print(hr);
-      Serial.print(" | SpO2: ");
-      Serial.print(spo2);
-      Serial.print(" | Steps: ");
-      Serial.println(steps);
+      Serial.print("[BLE] Data sent");
     } else {
-      Serial.println("Aucun appareil BLE connecté.");
+      Serial.print("[BLE] No device connected");
     }
+    Serial.print(" -> HR: ");
+    Serial.print(hr);
+    Serial.print(" | SpO2: ");
+    Serial.print(spo2);
+    Serial.print(" | Steps: ");
+    Serial.println(steps);
   }
 }

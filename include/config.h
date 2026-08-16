@@ -1,9 +1,10 @@
 #ifndef CONFIG_H
 #define CONFIG_H
 
-// MODE TEST D'INTÉGRATION 
-// Décommenter cette ligne si la carte de test n'a pas les capteurs (MAX30102 / MPU6050) connectés
-// #define TEST_INTEGRATION
+// MATÉRIEL PRÉSENT
+// Ça ne se règle pas ici mais dans les build_flags de platformio.ini :
+// HAS_OXYGEN, HAS_IMU, HAS_POWER_BUTTON. Un flag absent = capteur non câblé,
+// le code correspondant est compilé out et remplacé par des valeurs simulées.
 
 // Configuration générale
 #define DEV_ID "BRASCO-00"
