@@ -211,16 +211,19 @@ void loop() {
     uint8_t spo2 = sensorManager.getSpO2();
     uint32_t steps = sensorManager.getSteps();
 
+    // Les mesures sont toujours affichées sur le série, connecté ou non :
+    // c'est le seul moyen de vérifier les capteurs sans téléphone appairé.
     if (bleManager.isConnected()) {
       bleManager.sendSensorData(hr, spo2, steps);
-      Serial.print("Données envoyées -> HR: ");
-      Serial.print(hr);
-      Serial.print(" | SpO2: ");
-      Serial.print(spo2);
-      Serial.print(" | Steps: ");
-      Serial.println(steps);
+      Serial.print("[BLE] Data sent");
     } else {
-      Serial.println("Aucun appareil BLE connecté.");
+      Serial.print("[BLE] No device connected");
     }
+    Serial.print(" -> HR: ");
+    Serial.print(hr);
+    Serial.print(" | SpO2: ");
+    Serial.print(spo2);
+    Serial.print(" | Steps: ");
+    Serial.println(steps);
   }
 }
