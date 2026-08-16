@@ -4,28 +4,37 @@
 #include <math.h>
 
 // ==================== CONSTRUCTEUR / DESTRUCTEUR ====================
+// La virgule est en tête de chaque bloc optionnel : comme ça aucune
+// combinaison de flags ne laisse une virgule orpheline en fin de liste.
 SensorManager::SensorManager()
-#ifndef TEST_INTEGRATION
-    : pMAX30102(nullptr), pMPU6050(nullptr),
-      lastHeartRate(0), lastSpO2(0), stepCounter(0),
-      lastAx(0), lastAy(0), lastAz(0), accelMagnitude(0.0f),
-      isMoving(false) {
-#else
-    : lastHeartRate(0), lastSpO2(0), stepCounter(0) {
+    : lastHeartRate(0), lastSpO2(0), stepCounter(0)
+#ifdef HAS_OXYGEN
+      , pMAX30102(nullptr)
 #endif
+#ifdef HAS_IMU
+      , pMPU6050(nullptr),
+      lastAx(0), lastAy(0), lastAz(0), accelMagnitude(0.0f),
+      isMoving(false)
+#endif
+{
 }
 
 SensorManager::~SensorManager() {
-#ifndef TEST_INTEGRATION
+#ifdef HAS_OXYGEN
     if (pMAX30102) delete pMAX30102;
+#endif
+#ifdef HAS_IMU
     if (pMPU6050) delete pMPU6050;
 #endif
 }
 
 // ==================== INITIALISATION I2C ====================
+// Le bus n'est démarré que s'il y a au moins un capteur I2C câblé.
 bool SensorManager::initI2C(uint8_t sda, uint8_t scl) {
-#ifdef TEST_INTEGRATION
-    Serial.println("[SensorManager] Mode TEST_INTEGRATION -> I2C ignoré");
+#if !defined(HAS_OXYGEN) && !defined(HAS_IMU)
+    (void)sda;
+    (void)scl;
+    Serial.println("[SensorManager] Aucun capteur I2C déclaré -> I2C ignoré");
     return true;
 #else
     Serial.print("[SensorManager] Initialisation I2C... ");
@@ -43,8 +52,8 @@ bool SensorManager::initI2C(uint8_t sda, uint8_t scl) {
 
 // ==================== INITIALISATION MAX30102 ====================
 bool SensorManager::initMAX30102() {
-#ifdef TEST_INTEGRATION
-    Serial.println("[SensorManager] Mode TEST_INTEGRATION -> MAX30102 ignoré");
+#ifndef HAS_OXYGEN
+    Serial.println("[SensorManager] HAS_OXYGEN absent -> MAX30102 ignoré");
     return true;
 #else
     Serial.print("[SensorManager] Initialisation MAX30102 (Oxymètre)... ");
@@ -63,8 +72,8 @@ bool SensorManager::initMAX30102() {
 
 // ==================== INITIALISATION MPU6050 ====================
 bool SensorManager::initMPU6050() {
-#ifdef TEST_INTEGRATION
-    Serial.println("[SensorManager] Mode TEST_INTEGRATION -> MPU6050 ignoré");
+#ifndef HAS_IMU
+    Serial.println("[SensorManager] HAS_IMU absent -> MPU6050 ignoré");
     return true;
 #else
     Serial.print("[SensorManager] Initialisation MPU6050 (Accéléromètre)... ");
@@ -84,34 +93,39 @@ bool SensorManager::initMPU6050() {
 // ==================== PRÉPARATION À LA VEILLE ====================
 void SensorManager::prepareSleep() {
     Serial.println("[SensorManager] Préparation à la veille...");
-#ifndef TEST_INTEGRATION
+#ifdef HAS_OXYGEN
     if (pMAX30102) {
         pMAX30102->sensorEndCollect();
         Serial.println("[SensorManager] MAX30102 -> arrêt collecte");
     }
+#endif
+#ifdef HAS_IMU
     if (pMPU6050) {
         pMPU6050->setSleepEnabled(true);
         Serial.println("[SensorManager] MPU6050 -> SLEEP");
     }
-#else
-    Serial.println("[SensorManager] Mode TEST_INTEGRATION -> rien à faire");
+#endif
+#if !defined(HAS_OXYGEN) && !defined(HAS_IMU)
+    Serial.println("[SensorManager] Aucun capteur déclaré -> rien à faire");
 #endif
 }
 
 // ==================== MISE À JOUR DES LECTURES ====================
+// Chaque capteur a sa moitié indépendante : sans son flag, on retombe sur les
+// valeurs simulées (utiles pour tester le BLE / l'appli sans le matériel).
 void SensorManager::updateReadings() {
-#ifdef TEST_INTEGRATION
-    // Valeurs simulées pour les tests d'intégration BLE / appli mobile
-    lastHeartRate = 75;
-    lastSpO2 = 98;
-    stepCounter += 10;
-#else
+#ifdef HAS_OXYGEN
     if (pMAX30102) {
         pMAX30102->getHeartbeatSPO2();
         lastHeartRate = pMAX30102->_sHeartbeatSPO2.Heartbeat;
         lastSpO2 = pMAX30102->_sHeartbeatSPO2.SPO2;
     }
+#else
+    lastHeartRate = 75;
+    lastSpO2 = 98;
+#endif
 
+#ifdef HAS_IMU
     if (pMPU6050) {
         int16_t ax, ay, az;
         pMPU6050->getAcceleration(&ax, &ay, &az);
@@ -120,11 +134,13 @@ void SensorManager::updateReadings() {
         lastAz = az;
         detectSteps();
     }
+#else
+    stepCounter += 10;
 #endif
 }
 
 // ==================== DÉTECTION DE PAS ====================
-#ifndef TEST_INTEGRATION
+#ifdef HAS_IMU
 void SensorManager::detectSteps() {
     accelMagnitude = sqrt(
         (float)lastAx * lastAx +
@@ -145,4 +161,4 @@ void SensorManager::detectSteps() {
         isMoving = false;
     }
 }
-#endif
+#endif // HAS_IMU

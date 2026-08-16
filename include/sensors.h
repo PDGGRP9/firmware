@@ -5,26 +5,40 @@
 #include <Wire.h>
 #include "config.h"
 
-#ifndef TEST_INTEGRATION
+// Les libs capteur ne sont incluses que si le capteur est déclaré câblé
+// (flags HAS_* de platformio.ini) : sans ça, un env sans le lib_deps
+// correspondant ne compile pas.
+#ifdef HAS_OXYGEN
 #include "DFRobot_BloodOxygen_S.h"
+#endif // HAS_OXYGEN
+
+#ifdef HAS_IMU
 #include "I2Cdev.h"
 #include "MPU6050.h"
-#endif // TEST_INTEGRATION
+#endif // HAS_IMU
 
 class SensorManager {
 private:
-#ifndef TEST_INTEGRATION
+    // Toujours présents : ce sont eux qu'on envoie en BLE, qu'ils viennent
+    // d'un vrai capteur ou de la simulation.
+    uint8_t  lastHeartRate;
+    uint8_t  lastSpO2;
+    uint32_t stepCounter;
+
+    // Les membres ci-dessous sont déclarés APRÈS les trois du haut pour que la
+    // liste d'initialisation du constructeur reste dans l'ordre de déclaration
+    // quelle que soit la combinaison de flags (sinon warning -Wreorder).
+#ifdef HAS_OXYGEN
     DFRobot_BloodOxygen_S_I2C* pMAX30102;
+#endif // HAS_OXYGEN
+
+#ifdef HAS_IMU
     MPU6050* pMPU6050;
     int16_t lastAx, lastAy, lastAz;
     float accelMagnitude;
     bool isMoving;
     const float STEP_THRESHOLD = 15.0f;
-#endif // TEST_INTEGRATION
-
-    uint8_t  lastHeartRate;
-    uint8_t  lastSpO2;
-    uint32_t stepCounter;
+#endif // HAS_IMU
 
 public:
     // Constructeur et destructeur
@@ -47,10 +61,10 @@ public:
     uint8_t getSpO2() const { return lastSpO2; }
     uint32_t getSteps() const { return stepCounter; }
 
-#ifndef TEST_INTEGRATION
+#ifdef HAS_IMU
     float getAccelMagnitude() const { return accelMagnitude; }
     void detectSteps();
-#endif // TEST_INTEGRATION
+#endif // HAS_IMU
 
     void resetSteps() { stepCounter = 0; }
 };
