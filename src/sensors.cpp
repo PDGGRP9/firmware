@@ -1,4 +1,5 @@
 #include "sensors.h"
+#include "logic/measurement.h"
 #include "config.h"
 #include <Arduino.h>
 #include <math.h>
@@ -117,8 +118,11 @@ void SensorManager::updateReadings() {
 #ifdef HAS_OXYGEN
     if (pMAX30102) {
         pMAX30102->getHeartbeatSPO2();
-        lastHeartRate = pMAX30102->_sHeartbeatSPO2.Heartbeat;
-        lastSpO2 = pMAX30102->_sHeartbeatSPO2.SPO2;
+        // Le capteur renvoie -1 quand il n'a rien de valable : sans ce passage
+        // par sanitizeReading(), le -1 devient 255 dans un uint8_t et part tel
+        // quel jusqu'au backend. Le protocole dit 0 = pas de lecture.
+        lastHeartRate = sanitizeReading(pMAX30102->_sHeartbeatSPO2.Heartbeat, MAX_PLAUSIBLE_HR);
+        lastSpO2 = sanitizeReading(pMAX30102->_sHeartbeatSPO2.SPO2, MAX_PLAUSIBLE_SPO2);
     }
 #else
     lastHeartRate = 75;
