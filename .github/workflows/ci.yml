@@ -74,11 +74,9 @@ jobs:
     needs: build
     steps:
       - uses: actions/checkout@v4
-      - name: Install PlatformIO
-        run: pip install --upgrade platformio
       - name: Flash & test on the real ESP32-S3
         run: |
-          pio run -e esp32-s3 -t upload --upload-port /dev/ttyACM0
+          pio run -e esp32-s3-ci -t upload --upload-port /dev/ttyACM0
           # pio test -e esp32-s3 --upload-port /dev/ttyACM0
 
   release:
