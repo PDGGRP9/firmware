@@ -2,3 +2,9 @@
 .vscode/*
 !.vscode/extensions.json
 .DS_Store
+
+
+include/secrets.h
+.claude/*
+CLAUDE.md
+reports/*
