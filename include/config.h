@@ -36,7 +36,7 @@
 // HIGH turns it on (tested on board: active low left it dark).
 // If it stays dark in both states it is the wiring: flash the esp32-s3-diag env
 // (src/diag/pins_diag.cpp) to settle that before touching anything here.
-#define STATUS_LED_PIN D10
+#define STATUS_LED_PIN D7
 #define STATUS_LED_ON  LOW
 #define STATUS_LED_OFF HIGH
 
