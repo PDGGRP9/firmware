@@ -29,12 +29,16 @@ private:
 
     SyncState syncState;
     uint8_t  lastBatchCount;    // taille du paquet en attente d'ACK
-    uint32_t batchSeq;          // numéro de paquet, sert uniquement aux logs
+    // Numéro du paquet en cours. Il part dans l'en-tête HISTORY et l'app le
+    // renvoie dans son ACK : c'est ce qui permet de refuser l'ACK d'un paquet
+    // déjà acquitté. Seule l'égalité est testée, le wrap à 65535 est sans effet.
+    uint16_t batchSeq;
     uint32_t lastBatchSentMs;
     uint32_t lastStateLogMs;
 
     // Écrits depuis la tâche BLE, lus depuis loop() : voir tick().
     volatile uint8_t  pendingCmd;      // 0 = rien en attente
+    volatile uint16_t pendingAckSeq;   // numéro porté par le dernier ACK reçu
     volatile uint32_t pendingEpoch;
     volatile bool     hasPendingTime;
     volatile bool     pendingFlush;
@@ -70,7 +74,8 @@ public:
     void tick();
 
     // Appelés depuis les callbacks NimBLE — ne font que mémoriser.
-    void onSyncCommand(uint8_t cmd);
+    // `seq` n'a de sens que pour SYNC_CMD_ACK ; 0 pour START et STOP.
+    void onSyncCommand(uint8_t cmd, uint16_t seq);
     void onTimeWrite(uint32_t epoch);
 
     void handleConnect();

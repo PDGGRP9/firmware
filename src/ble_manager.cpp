@@ -9,6 +9,18 @@ static BLEManager* g_pBLEManager = nullptr;
 class MyServerCallbacks : public NimBLEServerCallbacks {
 
   void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
+    // Téléphone déjà appairé : NimBLE remet le chiffrement en place tout seul à
+    // partir de la clé stockée (LTK), sans rejouer de pairing. Du coup
+    // onAuthenticationComplete n'est jamais appelé et, sans ce test, le bracelet
+    // resterait à conn=0 pour toujours en ignorant le START (log du 2026-08-31,
+    // le téléphone finit par couper avec la raison HCI 531).
+    if (connInfo.isEncrypted()) {
+      Serial.println("[BLE] Connexion chiffrée d'emblée (pair déjà appairé)");
+      if (g_pBLEManager) {
+        g_pBLEManager->handleAuthComplete(true, connInfo.getConnHandle());
+      }
+      return;
+    }
     Serial.println("[BLE] Connexion physique établie (en attente d'authentification)");
   }
 
@@ -47,6 +59,15 @@ class MyControlCallbacks : public NimBLECharacteristicCallbacks {
     if (!g_pBLEManager) return;
     std::string value = pChar->getValue();
 
+    // Recevoir une écriture sur une caractéristique WRITE_ENC prouve que le lien
+    // est chiffré : la pile BLE l'aurait refusée sinon. Ça peut arriver AVANT que
+    // NimBLE nous signale la fin de l'authentification (c'est ce qui s'est passé
+    // avec le TIME reçu à conn=0). On considère donc le client comme connecté dès
+    // maintenant, sinon la commande qui suit serait traitée dans le vide.
+    if (!g_pBLEManager->isConnected() && connInfo.isEncrypted()) {
+      g_pBLEManager->handleAuthComplete(true, connInfo.getConnHandle());
+    }
+
     // Trace systématique : les écritures sont rares (heure + commandes de
     // synchro), et c'est le seul moyen de savoir si l'app arrive bien à parler
     // au bracelet quand la synchro ne démarre pas.
@@ -57,11 +78,18 @@ class MyControlCallbacks : public NimBLECharacteristicCallbacks {
     Serial.println(" octets)");
 
     if (pChar->getUUID().equals(NimBLEUUID(SYNC_CTRL_UUID))) {
-      if (value.size() != 1) {
+      // START et STOP tiennent en 1 octet ; l'ACK en fait 3 et porte le numéro
+      // du paquet qu'il acquitte : [0x02][seqLo][seqHi].
+      if (value.size() != 1 && value.size() != 3) {
         Serial.println("[BLE] Commande SYNC de taille invalide, ignorée");
         return;
       }
-      g_pBLEManager->onSyncCommand((uint8_t)value[0]);
+      const uint8_t* c = (const uint8_t*)value.data();
+      uint16_t seq = 0;
+      if (value.size() == 3) {
+        seq = (uint16_t)c[1] | ((uint16_t)c[2] << 8);
+      }
+      g_pBLEManager->onSyncCommand(c[0], seq);
     } else if (pChar->getUUID().equals(NimBLEUUID(TIME_UUID))) {
       if (value.size() != 4) {
         Serial.println("[BLE] TIME de taille invalide, ignoré");
@@ -83,7 +111,8 @@ BLEManager::BLEManager()
     storage_(nullptr), time_(nullptr),
     syncState(SYNC_IDLE), lastBatchCount(0), batchSeq(0),
     lastBatchSentMs(0), lastStateLogMs(0),
-    pendingCmd(0), pendingEpoch(0), hasPendingTime(false), pendingFlush(false),
+    pendingCmd(0), pendingAckSeq(0), pendingEpoch(0), hasPendingTime(false),
+    pendingFlush(false),
     connHandle(BLE_HS_CONN_HANDLE_NONE) {
   g_pBLEManager = this;
 }
@@ -207,6 +236,10 @@ void BLEManager::sendSensorData(uint8_t hr, uint8_t spo2, uint32_t steps) {
 
 // ==================== CALLBACKS INTERNES ====================
 void BLEManager::handleConnect() {
+  // On peut passer ici deux fois pour la même connexion (lien déjà chiffré, puis
+  // fin d'authentification). Sans cette sortie, le deuxième passage remettrait
+  // syncState à IDLE alors qu'un vidage est peut-être déjà en cours.
+  if (deviceConnected) return;
   deviceConnected = true;
   syncState = SYNC_IDLE;  // on attend le START de l'app
   Serial.println("[BLE] Client connecté et authentifié !");
@@ -217,6 +250,9 @@ void BLEManager::handleDisconnect() {
   deviceConnected = false;
   advertisingActive = false;
   syncState = SYNC_IDLE;
+  // Sans ça, getPeerMTU() interrogerait à la reconnexion un handle mort et
+  // renverrait 0 -> paquets calibrés sur un MTU imaginaire (voir sendNextBatch).
+  connHandle = BLE_HS_CONN_HANDLE_NONE;
   // Rien n'est purgé : le paquet non acquitté repartira à la reconnexion.
   if (lastBatchCount > 0) {
     Serial.print("[SYNC] Lien perdu avec ");
@@ -240,7 +276,7 @@ void BLEManager::handleAuthComplete(bool success, uint16_t handle) {
     Serial.println("[BLE] Échec de l'authentification -> déconnexion");
     deviceConnected = false;
     if (pServer) {
-      pServer->disconnect(0);
+      pServer->disconnect(handle);
     }
   }
 }
@@ -261,8 +297,9 @@ bool BLEManager::stopAdvertising() {
 }
 
 // ==================== COMMANDES RECUES (juste memorisees) ====================
-void BLEManager::onSyncCommand(uint8_t cmd) {
+void BLEManager::onSyncCommand(uint8_t cmd, uint16_t seq) {
   pendingCmd = cmd;
+  pendingAckSeq = seq;
 }
 
 void BLEManager::onTimeWrite(uint32_t epoch) {
@@ -294,6 +331,13 @@ void BLEManager::tick() {
   // 3. Commande de synchro en attente.
   uint8_t cmd = pendingCmd;
   if (cmd != 0) {
+    // Lien pas encore prêt : on GARDE la commande au lieu de la consommer. Avant,
+    // sendNextBatch() sortait sans un mot et le START disparaissait sans laisser
+    // la moindre trace dans les logs.
+    if (!deviceConnected) {
+      Serial.println("[SYNC] Commande reçue avant que le lien soit prêt -> gardée");
+      return;
+    }
     pendingCmd = 0;
     switch (cmd) {
       case SYNC_CMD_START:
@@ -309,6 +353,14 @@ void BLEManager::tick() {
           // Typiquement l'ACK d'un paquet déjà renvoyé après timeout :
           // sans conséquence, on l'ignore.
           Serial.println("[SYNC] ACK reçu hors attente, ignoré");
+          break;
+        }
+        if (pendingAckSeq != batchSeq) {
+          // ACK d'un paquet déjà acquitté (doublon, ou arrivé après un renvoi).
+          // Sans ce test il passerait pour l'ACK du paquet courant et purgerait
+          // des mesures que l'app n'a jamais reçues.
+          Serial.printf("[SYNC] ACK #%u alors qu'on attend #%u -> ignoré\n",
+                        (unsigned)pendingAckSeq, (unsigned)batchSeq);
           break;
         }
         Serial.print("[SYNC] ACK paquet #");
@@ -336,7 +388,11 @@ void BLEManager::tick() {
 
   // 4. Pas d'ACK à temps : on renvoie le même paquet. Sans risque, rien n'a été
   //    purgé, et l'app déduplique par ts.
-  if (syncState == SYNC_WAIT_ACK && (now - lastBatchSentMs) >= SYNC_ACK_TIMEOUT) {
+  // millis() est relu ici au lieu du `now` du début de tick() : sendNextBatch()
+  // a pu tourner juste au-dessus (étape 3) et poser lastBatchSentMs APRÈS `now`.
+  // La soustraction uint32_t partirait alors en underflow (~4,29 milliards) et
+  // chaque paquet serait renvoyé aussitôt après son envoi.
+  if (syncState == SYNC_WAIT_ACK && (millis() - lastBatchSentMs) >= SYNC_ACK_TIMEOUT) {
     Serial.print("[SYNC] Pas d'ACK -> renvoi du paquet #");
     Serial.print(batchSeq);
     Serial.println(" (rien n'a été purgé)");
@@ -370,7 +426,10 @@ void BLEManager::sendNextBatch() {
   // plutôt la taille du paquet à ce qui passe vraiment.
   uint8_t maxBatch = HISTORY_BATCH;
   uint16_t mtu = pServer->getPeerMTU(connHandle);
-  if (mtu > 3 + HISTORY_HEADER_SIZE) {
+  // MTU inconnu (0) : on retombe sur le minimum imposé par le BLE, 23 octets.
+  // Se rabattre sur le meilleur cas tronquerait le paquet en silence.
+  if (mtu < 23) mtu = 23;
+  {
     uint16_t fits = (mtu - 3 - HISTORY_HEADER_SIZE) / MEASUREMENT_SIZE;
     if (fits < 1) fits = 1;
     if (fits < maxBatch) {
@@ -386,6 +445,16 @@ void BLEManager::sendNextBatch() {
   Measurement batch[HISTORY_BATCH];
   uint8_t n = storage_->readBatch(batch, maxBatch);
 
+  // Les mesures prises avant la synchro portent leur uptime : maintenant qu'on a
+  // l'heure, on leur rend leur epoch. Uniquement dans le paquet sortant — la
+  // flash garde l'uptime, réécrire le ring l'userait pour rien, et un renvoi
+  // après timeout refait le même calcul à l'identique.
+  if (time_) {
+    for (uint8_t i = 0; i < n; ++i) {
+      batch[i].ts = time_->resolve(batch[i].ts);
+    }
+  }
+
   if (n == 0) {
     // Stock vide : l'app peut passer en live.
     uint8_t packet[HISTORY_HEADER_SIZE];
@@ -400,12 +469,16 @@ void BLEManager::sendNextBatch() {
     return;
   }
 
+  // Incrémenté AVANT la construction : c'est ce numéro qui part dans l'en-tête
+  // et que l'app doit renvoyer. Le renvoi sur timeout fait batchSeq-- juste
+  // avant d'appeler ici, donc un paquet renvoyé garde son numéro.
+  batchSeq++;
+
   uint8_t packet[HISTORY_HEADER_SIZE + HISTORY_BATCH * MEASUREMENT_SIZE];
-  size_t len = buildHistoryPacket(batch, n, packet);
+  size_t len = buildHistoryPacket(batch, n, batchSeq, packet);
   pCharHistory->setValue(packet, len);
   pCharHistory->notify();
 
-  batchSeq++;
   lastBatchCount = n;
   lastBatchSentMs = millis();
   syncState = SYNC_WAIT_ACK;

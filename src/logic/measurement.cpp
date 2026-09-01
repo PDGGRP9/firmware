@@ -21,9 +21,13 @@ Measurement decodeMeasurement(const uint8_t* in) {
     return m;
 }
 
-size_t buildHistoryPacket(const Measurement* items, uint8_t count, uint8_t* out) {
+size_t buildHistoryPacket(const Measurement* items, uint8_t count, uint16_t seq, uint8_t* out) {
     out[0] = HISTORY_TYPE_DATA;
     out[1] = count;
+    // Little-endian, comme tout le reste du protocole : l'app renvoie ces deux
+    // octets tels quels dans son ACK.
+    out[2] = (uint8_t)(seq & 0xFF);
+    out[3] = (uint8_t)((seq >> 8) & 0xFF);
     for (uint8_t i = 0; i < count; ++i) {
         encodeMeasurement(items[i], out + HISTORY_HEADER_SIZE + i * MEASUREMENT_SIZE);
     }
@@ -33,6 +37,9 @@ size_t buildHistoryPacket(const Measurement* items, uint8_t count, uint8_t* out)
 size_t buildHistoryEndPacket(uint8_t* out) {
     out[0] = HISTORY_TYPE_END;
     out[1] = 0;
+    // Pas de séquence : ce paquet n'est pas acquitté.
+    out[2] = 0;
+    out[3] = 0;
     return HISTORY_HEADER_SIZE;
 }
 

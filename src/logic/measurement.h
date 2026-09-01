@@ -18,15 +18,28 @@ struct Measurement {
 // le compilateur peut ajouter du padding, et ça décalerait tout le fichier ring.
 constexpr size_t MEASUREMENT_SIZE = 8;
 
-// Un paquet d'historique = [type][count] puis les mesures.
-constexpr size_t  HISTORY_HEADER_SIZE = 2;
-constexpr uint8_t HISTORY_TYPE_DATA   = 0x01;  // il reste des mesures
+// Un paquet d'historique = [type][count][seqLo][seqHi] puis les mesures.
+// Le numéro de séquence est renvoyé tel quel dans l'ACK : sans lui, un ACK en
+// retard serait pris pour celui du paquet courant et purgerait des mesures que
+// l'app n'a jamais reçues.
+constexpr size_t  HISTORY_HEADER_SIZE = 4;
+// 0x11 et pas 0x01 : une app d'avant le numéro de séquence lirait les mesures
+// deux octets trop tôt et acquitterait des données décalées, sans rien voir.
+// Avec un type qu'elle ne connaît pas, elle refuse le paquet et ça se voit.
+constexpr uint8_t HISTORY_TYPE_DATA   = 0x11;  // il reste des mesures
 constexpr uint8_t HISTORY_TYPE_END    = 0xFF;  // stock vide, l'app peut passer en live
 
-// Commandes reçues sur la caractéristique SYNC_CTRL (1 octet).
+// Commandes reçues sur la caractéristique SYNC_CTRL.
+// START et STOP tiennent en 1 octet, ACK en fait 3 : [0x02][seqLo][seqHi].
 constexpr uint8_t SYNC_CMD_START = 0x01;
 constexpr uint8_t SYNC_CMD_ACK   = 0x02;
 constexpr uint8_t SYNC_CMD_STOP  = 0x03;
+
+// Sous ce seuil, `ts` n'est pas un epoch mais l'uptime du bracelet en secondes :
+// la mesure a été prise avant que l'app ait donné l'heure. Un epoch réel est
+// forcément au-dessus (sept. 2020), un uptime ne l'atteint jamais. L'app Android
+// applique la même règle (BraceletMeasurementCodec.TS_EPOCH_MIN).
+constexpr uint32_t TS_EPOCH_MIN = 1600000000u;
 
 // Le driver du MAX30102 renvoie -1 quand il n'a pas de lecture valable (doigt
 // absent, signal trop bruité). Rangé dans un uint8_t, ce -1 devient 255 : une
@@ -43,11 +56,12 @@ constexpr uint8_t MAX_PLAUSIBLE_SPO2 = 100;  // un pourcentage, forcément
 void encodeMeasurement(const Measurement& m, uint8_t* out);
 Measurement decodeMeasurement(const uint8_t* in);
 
-// Écrit [0x01][count] + count mesures dans `out`.
+// Écrit [0x11][count][seqLo][seqHi] + count mesures dans `out`.
 // Retourne le nombre d'octets écrits.
-size_t buildHistoryPacket(const Measurement* items, uint8_t count, uint8_t* out);
+size_t buildHistoryPacket(const Measurement* items, uint8_t count, uint16_t seq, uint8_t* out);
 
-// Écrit [0xFF][0] : « je n'ai plus rien en stock ». Retourne 2.
+// Écrit [0xFF][0][0][0] : « je n'ai plus rien en stock ». Retourne 4.
+// Ce paquet n'est jamais acquitté, sa séquence vaut donc 0.
 size_t buildHistoryEndPacket(uint8_t* out);
 
 #endif // MEASUREMENT_H

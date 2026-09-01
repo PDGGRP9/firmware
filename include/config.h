@@ -80,7 +80,7 @@
 #define PREFS_NAMESPACE "brasco"
 
 // Synchro
-#define HISTORY_BATCH    20      // mesures par paquet ; 20*8+2 = 162 o, tient dans le MTU 185
+#define HISTORY_BATCH    20      // mesures par paquet ; 20*8+4 = 164 o, tient dans le MTU 185
 #define SYNC_ACK_TIMEOUT 5000UL  // ms sans ACK -> on renvoie le paquet (rien n'a été purgé)
 
 // Ligne d'état périodique sur le série : sans ça, un bracelet silencieux est

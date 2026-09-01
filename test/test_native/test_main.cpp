@@ -57,11 +57,15 @@ void test_zero_values_survive(void) {
 void test_history_packet_framing(void) {
     Measurement items[3] = {{100, 60, 95, 1}, {104, 61, 96, 2}, {108, 62, 97, 3}};
     uint8_t buf[64];
-    size_t len = buildHistoryPacket(items, 3, buf);
+    size_t len = buildHistoryPacket(items, 3, 0x0102, buf);
 
     TEST_ASSERT_EQUAL_UINT32(HISTORY_HEADER_SIZE + 3 * MEASUREMENT_SIZE, len);
     TEST_ASSERT_EQUAL_HEX8(HISTORY_TYPE_DATA, buf[0]);
     TEST_ASSERT_EQUAL_UINT8(3, buf[1]);
+    // Le numéro de séquence part en little-endian, comme le reste du protocole :
+    // l'app le relit tel quel pour l'ACK.
+    TEST_ASSERT_EQUAL_HEX8(0x02, buf[2]);
+    TEST_ASSERT_EQUAL_HEX8(0x01, buf[3]);
 
     Measurement third = decodeMeasurement(buf + HISTORY_HEADER_SIZE + 2 * MEASUREMENT_SIZE);
     TEST_ASSERT_EQUAL_UINT32(108, third.ts);
@@ -72,9 +76,12 @@ void test_history_end_packet(void) {
     uint8_t buf[4];
     size_t len = buildHistoryEndPacket(buf);
 
-    TEST_ASSERT_EQUAL_UINT32(HISTORY_HEADER_SIZE, len);
+    TEST_ASSERT_EQUAL_UINT32(4, len);
     TEST_ASSERT_EQUAL_HEX8(HISTORY_TYPE_END, buf[0]);
     TEST_ASSERT_EQUAL_UINT8(0, buf[1]);
+    // Ce paquet n'est pas acquitté : pas de numéro de séquence.
+    TEST_ASSERT_EQUAL_UINT8(0, buf[2]);
+    TEST_ASSERT_EQUAL_UINT8(0, buf[3]);
 }
 
 // Le MTU BLE négocié est 185 : un paquet plein doit tenir dedans, sinon
@@ -82,7 +89,7 @@ void test_history_end_packet(void) {
 void test_full_packet_fits_in_mtu(void) {
     const size_t batch = 20;
     size_t maxLen = HISTORY_HEADER_SIZE + batch * MEASUREMENT_SIZE;
-    TEST_ASSERT_EQUAL_UINT32(162, maxLen);
+    TEST_ASSERT_EQUAL_UINT32(164, maxLen);
     TEST_ASSERT_TRUE(maxLen <= 185 - 3);  // 3 octets d'en-tête ATT
 }
 
@@ -145,10 +152,14 @@ void test_ring_restore_rejects_garbage(void) {
 
 // --- TimeSource -------------------------------------------------------------
 
-void test_time_unknown_before_sync(void) {
+// Avant la synchro on renvoie l'uptime en secondes, pas 0 : sinon toutes les
+// mesures du backlog partagent le même ts et la dédup de l'app n'en garde qu'une.
+void test_time_uptime_before_sync(void) {
     TimeSource ts;
     TEST_ASSERT_FALSE(ts.isSynced());
-    TEST_ASSERT_EQUAL_UINT32(0, ts.now(123456));
+    TEST_ASSERT_EQUAL_UINT32(123, ts.now(123456));
+    // Sous TS_EPOCH_MIN : c'est ce qui permet de le distinguer d'un vrai epoch.
+    TEST_ASSERT_TRUE(ts.now(123456) < TS_EPOCH_MIN);
 }
 
 void test_time_after_sync(void) {
@@ -169,6 +180,42 @@ void test_time_survives_millis_wrap(void) {
     TEST_ASSERT_EQUAL_UINT32(1005, ts.now(afterWrap));
 }
 
+
+// Une mesure prise avant la synchro porte son uptime. Une fois l'heure reçue,
+// resolve() doit retrouver son epoch en remontant depuis le point de synchro.
+void test_resolve_gives_back_the_real_epoch(void) {
+    TimeSource ts;
+    // Synchro à l'uptime 100 s (millis = 100000) avec l'epoch 1755950400.
+    ts.sync(1755950400u, 100000);
+
+    // Mesure prise à l'uptime 40 s, soit 60 s avant la synchro.
+    TEST_ASSERT_EQUAL_UINT32(1755950340u, ts.resolve(40));
+    // Mesure prise à l'instant même de la synchro.
+    TEST_ASSERT_EQUAL_UINT32(1755950400u, ts.resolve(100));
+}
+
+// Un ts déjà epoch ne doit surtout pas être retouché.
+void test_resolve_leaves_a_real_epoch_alone(void) {
+    TimeSource ts;
+    ts.sync(1755950400u, 100000);
+    TEST_ASSERT_EQUAL_UINT32(1755950405u, ts.resolve(1755950405u));
+    TEST_ASSERT_EQUAL_UINT32(TS_EPOCH_MIN, ts.resolve(TS_EPOCH_MIN));
+}
+
+// Sans synchro on n'a aucune base : l'uptime ressort tel quel.
+void test_resolve_without_sync_returns_input(void) {
+    TimeSource ts;
+    TEST_ASSERT_EQUAL_UINT32(40, ts.resolve(40));
+}
+
+// Limite connue, volontairement non gérée : un uptime postérieur au point de
+// synchro vient d'un boot précédent (bracelet redémarré avec du stock non vidé).
+// Sa base n'existe plus, on le laisse tel quel plutôt que d'inventer une heure.
+void test_resolve_leaves_a_previous_boot_uptime_alone(void) {
+    TimeSource ts;
+    ts.sync(1755950400u, 100000);  // synchro à l'uptime 100 s
+    TEST_ASSERT_EQUAL_UINT32(500, ts.resolve(500));
+}
 
 // Le driver de l'oxymètre renvoie -1 quand il n'a pas de lecture : ça devient
 // 255 en uint8_t et ça remontait jusqu'au backend, qui refusait la mesure.
@@ -198,8 +245,12 @@ int main(int argc, char** argv) {
     RUN_TEST(test_ring_wraps_and_counts_dropped);
     RUN_TEST(test_ring_restore_rejects_garbage);
 
-    RUN_TEST(test_time_unknown_before_sync);
+    RUN_TEST(test_time_uptime_before_sync);
     RUN_TEST(test_time_after_sync);
+    RUN_TEST(test_resolve_gives_back_the_real_epoch);
+    RUN_TEST(test_resolve_leaves_a_real_epoch_alone);
+    RUN_TEST(test_resolve_without_sync_returns_input);
+    RUN_TEST(test_resolve_leaves_a_previous_boot_uptime_alone);
     RUN_TEST(test_time_survives_millis_wrap);
     RUN_TEST(test_sanitize_reading);
 
