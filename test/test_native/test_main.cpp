@@ -25,8 +25,8 @@ void test_encode_decode_roundtrip(void) {
     TEST_ASSERT_EQUAL_UINT16(in.steps, out.steps);
 }
 
-// Android lit ces octets dans cet ordre exact : si ce test casse, l'app
-// affichera n'importe quoi.
+// Android reads these bytes in this exact order: if this test breaks, the app
+// will display nonsense.
 void test_encode_is_little_endian(void) {
     Measurement m{0x11223344u, 0xAA, 0xBB, 0xCCDD};
     uint8_t buf[MEASUREMENT_SIZE];
@@ -43,8 +43,8 @@ void test_encode_is_little_endian(void) {
 }
 
 void test_zero_values_survive(void) {
-    // hr=0 / spo2=0 = « pas de lecture », ts=0 = « heure inconnue ».
-    // Ces cas passent par le même chemin, il ne faut pas qu'ils soient filtrés.
+    // hr=0 / spo2=0 = "no reading", ts=0 = "time unknown". These cases go
+    // through the same path and must not be filtered out.
     Measurement in{0, 0, 0, 0};
     uint8_t buf[MEASUREMENT_SIZE];
     encodeMeasurement(in, buf);
@@ -62,8 +62,8 @@ void test_history_packet_framing(void) {
     TEST_ASSERT_EQUAL_UINT32(HISTORY_HEADER_SIZE + 3 * MEASUREMENT_SIZE, len);
     TEST_ASSERT_EQUAL_HEX8(HISTORY_TYPE_DATA, buf[0]);
     TEST_ASSERT_EQUAL_UINT8(3, buf[1]);
-    // Le numéro de séquence part en little-endian, comme le reste du protocole :
-    // l'app le relit tel quel pour l'ACK.
+    // The sequence number goes out little-endian like the rest of the protocol:
+    // the app reads it back as is for the ACK.
     TEST_ASSERT_EQUAL_HEX8(0x02, buf[2]);
     TEST_ASSERT_EQUAL_HEX8(0x01, buf[3]);
 
@@ -79,18 +79,18 @@ void test_history_end_packet(void) {
     TEST_ASSERT_EQUAL_UINT32(4, len);
     TEST_ASSERT_EQUAL_HEX8(HISTORY_TYPE_END, buf[0]);
     TEST_ASSERT_EQUAL_UINT8(0, buf[1]);
-    // Ce paquet n'est pas acquitté : pas de numéro de séquence.
+    // This packet is never ACKed: no sequence number.
     TEST_ASSERT_EQUAL_UINT8(0, buf[2]);
     TEST_ASSERT_EQUAL_UINT8(0, buf[3]);
 }
 
-// Le MTU BLE négocié est 185 : un paquet plein doit tenir dedans, sinon
-// NimBLE tronque silencieusement la notification.
+// The negotiated BLE MTU is 185: a full packet must fit in it, otherwise
+// NimBLE silently truncates the notification.
 void test_full_packet_fits_in_mtu(void) {
     const size_t batch = 20;
     size_t maxLen = HISTORY_HEADER_SIZE + batch * MEASUREMENT_SIZE;
     TEST_ASSERT_EQUAL_UINT32(164, maxLen);
-    TEST_ASSERT_TRUE(maxLen <= 185 - 3);  // 3 octets d'en-tête ATT
+    TEST_ASSERT_TRUE(maxLen <= 185 - 3);  // 3 bytes of ATT header
 }
 
 // --- RingIndex --------------------------------------------------------------
@@ -102,7 +102,7 @@ void test_ring_push_and_read_order(void) {
     TEST_ASSERT_EQUAL_UINT32(2, ring.push());
 
     TEST_ASSERT_EQUAL_UINT32(3, ring.count());
-    TEST_ASSERT_EQUAL_UINT32(0, ring.slotAt(0));  // le plus ancien
+    TEST_ASSERT_EQUAL_UINT32(0, ring.slotAt(0));  // the oldest one
     TEST_ASSERT_EQUAL_UINT32(2, ring.slotAt(2));
 }
 
@@ -117,7 +117,7 @@ void test_ring_release_only_after_ack(void) {
     TEST_ASSERT_EQUAL_UINT32(2, ring.head());
     TEST_ASSERT_EQUAL_UINT32(2, ring.slotAt(0));
 
-    // Libérer plus que ce qu'on a ne doit pas passer en négatif.
+    // Releasing more than we have must not go negative.
     ring.release(99);
     TEST_ASSERT_EQUAL_UINT32(0, ring.count());
 }
@@ -126,11 +126,11 @@ void test_ring_wraps_and_counts_dropped(void) {
     RingIndex ring(3);
     ring.push();  // slot 0
     ring.push();  // slot 1
-    ring.push();  // slot 2 -> plein
+    ring.push();  // slot 2 -> full
     TEST_ASSERT_TRUE(ring.isFull());
     TEST_ASSERT_EQUAL_UINT32(0, ring.dropped());
 
-    uint32_t slot = ring.push();  // écrase le plus ancien
+    uint32_t slot = ring.push();  // overwrites the oldest one
     TEST_ASSERT_EQUAL_UINT32(0, slot);
     TEST_ASSERT_EQUAL_UINT32(1, ring.dropped());
     TEST_ASSERT_EQUAL_UINT32(3, ring.count());
@@ -144,7 +144,7 @@ void test_ring_restore_rejects_garbage(void) {
     TEST_ASSERT_EQUAL_UINT32(42, ring.head());
     TEST_ASSERT_EQUAL_UINT32(10, ring.count());
 
-    // NVS vierge ou corrompue : on repart vide au lieu de lire hors du fichier.
+    // Blank or corrupted NVS: start empty instead of reading outside the file.
     ring.restore(500, 10);
     TEST_ASSERT_EQUAL_UINT32(0, ring.head());
     TEST_ASSERT_EQUAL_UINT32(0, ring.count());
@@ -152,13 +152,13 @@ void test_ring_restore_rejects_garbage(void) {
 
 // --- TimeSource -------------------------------------------------------------
 
-// Avant la synchro on renvoie l'uptime en secondes, pas 0 : sinon toutes les
-// mesures du backlog partagent le même ts et la dédup de l'app n'en garde qu'une.
+// Before the sync we return the uptime in seconds, not 0: otherwise every
+// backlog measurement shares the same ts and the app's dedup keeps only one.
 void test_time_uptime_before_sync(void) {
     TimeSource ts;
     TEST_ASSERT_FALSE(ts.isSynced());
     TEST_ASSERT_EQUAL_UINT32(123, ts.now(123456));
-    // Sous TS_EPOCH_MIN : c'est ce qui permet de le distinguer d'un vrai epoch.
+    // Below TS_EPOCH_MIN: that is what tells it apart from a real epoch.
     TEST_ASSERT_TRUE(ts.now(123456) < TS_EPOCH_MIN);
 }
 
@@ -170,31 +170,31 @@ void test_time_after_sync(void) {
     TEST_ASSERT_EQUAL_UINT32(1755950405u, ts.now(15000));
 }
 
-// millis() repasse à 0 après ~49 jours : la soustraction en uint32_t doit
-// continuer à donner le bon écart.
+// millis() goes back to 0 after ~49 days: the uint32_t subtraction must still
+// give the right delta.
 void test_time_survives_millis_wrap(void) {
     TimeSource ts;
     uint32_t justBeforeWrap = 0xFFFFF000u;
     ts.sync(1000, justBeforeWrap);
-    uint32_t afterWrap = justBeforeWrap + 5000;  // wrappe
+    uint32_t afterWrap = justBeforeWrap + 5000;  // wraps
     TEST_ASSERT_EQUAL_UINT32(1005, ts.now(afterWrap));
 }
 
 
-// Une mesure prise avant la synchro porte son uptime. Une fois l'heure reçue,
-// resolve() doit retrouver son epoch en remontant depuis le point de synchro.
+// A measurement taken before the sync carries its uptime. Once the time is
+// known, resolve() must recover its epoch by walking back from the sync point.
 void test_resolve_gives_back_the_real_epoch(void) {
     TimeSource ts;
-    // Synchro à l'uptime 100 s (millis = 100000) avec l'epoch 1755950400.
+    // Sync at uptime 100 s (millis = 100000) with epoch 1755950400.
     ts.sync(1755950400u, 100000);
 
-    // Mesure prise à l'uptime 40 s, soit 60 s avant la synchro.
+    // Measurement taken at uptime 40 s, i.e. 60 s before the sync.
     TEST_ASSERT_EQUAL_UINT32(1755950340u, ts.resolve(40));
-    // Mesure prise à l'instant même de la synchro.
+    // Measurement taken at the very instant of the sync.
     TEST_ASSERT_EQUAL_UINT32(1755950400u, ts.resolve(100));
 }
 
-// Un ts déjà epoch ne doit surtout pas être retouché.
+// A ts that is already an epoch must not be touched.
 void test_resolve_leaves_a_real_epoch_alone(void) {
     TimeSource ts;
     ts.sync(1755950400u, 100000);
@@ -202,28 +202,28 @@ void test_resolve_leaves_a_real_epoch_alone(void) {
     TEST_ASSERT_EQUAL_UINT32(TS_EPOCH_MIN, ts.resolve(TS_EPOCH_MIN));
 }
 
-// Sans synchro on n'a aucune base : l'uptime ressort tel quel.
+// Without a sync we have no base: the uptime comes out unchanged.
 void test_resolve_without_sync_returns_input(void) {
     TimeSource ts;
     TEST_ASSERT_EQUAL_UINT32(40, ts.resolve(40));
 }
 
-// Limite connue, volontairement non gérée : un uptime postérieur au point de
-// synchro vient d'un boot précédent (bracelet redémarré avec du stock non vidé).
-// Sa base n'existe plus, on le laisse tel quel plutôt que d'inventer une heure.
+// Known limitation, deliberately not handled: an uptime later than the sync
+// point comes from a previous boot (reboot with a non-empty backlog). Its base
+// is gone, so we leave it as is rather than invent a time.
 void test_resolve_leaves_a_previous_boot_uptime_alone(void) {
     TimeSource ts;
-    ts.sync(1755950400u, 100000);  // synchro à l'uptime 100 s
+    ts.sync(1755950400u, 100000);  // sync at uptime 100 s
     TEST_ASSERT_EQUAL_UINT32(500, ts.resolve(500));
 }
 
-// Le driver de l'oxymètre renvoie -1 quand il n'a pas de lecture : ça devient
-// 255 en uint8_t et ça remontait jusqu'au backend, qui refusait la mesure.
+// The oximeter driver returns -1 when it has no reading: that becomes 255 in a
+// uint8_t and used to reach the backend, which rejected the measurement.
 void test_sanitize_reading(void) {
-    TEST_ASSERT_EQUAL_UINT8(0, sanitizeReading(-1, MAX_PLAUSIBLE_HR));    // pas de lecture
-    TEST_ASSERT_EQUAL_UINT8(0, sanitizeReading(255, MAX_PLAUSIBLE_HR));   // le -1 déjà tronqué
-    TEST_ASSERT_EQUAL_UINT8(0, sanitizeReading(101, MAX_PLAUSIBLE_SPO2)); // pas un pourcentage
-    TEST_ASSERT_EQUAL_UINT8(72, sanitizeReading(72, MAX_PLAUSIBLE_HR));   // lecture normale
+    TEST_ASSERT_EQUAL_UINT8(0, sanitizeReading(-1, MAX_PLAUSIBLE_HR));    // no reading
+    TEST_ASSERT_EQUAL_UINT8(0, sanitizeReading(255, MAX_PLAUSIBLE_HR));   // the -1 already truncated
+    TEST_ASSERT_EQUAL_UINT8(0, sanitizeReading(101, MAX_PLAUSIBLE_SPO2)); // not a percentage
+    TEST_ASSERT_EQUAL_UINT8(72, sanitizeReading(72, MAX_PLAUSIBLE_HR));   // normal reading
     TEST_ASSERT_EQUAL_UINT8(97, sanitizeReading(97, MAX_PLAUSIBLE_SPO2));
 }
 

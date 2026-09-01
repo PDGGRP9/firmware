@@ -4,9 +4,9 @@
 #include <Arduino.h>
 #include <math.h>
 
-// ==================== CONSTRUCTEUR / DESTRUCTEUR ====================
-// La virgule est en tête de chaque bloc optionnel : comme ça aucune
-// combinaison de flags ne laisse une virgule orpheline en fin de liste.
+// ==================== CONSTRUCTOR / DESTRUCTOR ====================
+// The comma leads each optional block so that no flag combination leaves an
+// orphan comma at the end of the init list.
 SensorManager::SensorManager()
     : lastHeartRate(0), lastSpO2(0), stepCounter(0)
 #ifdef HAS_OXYGEN
@@ -29,16 +29,16 @@ SensorManager::~SensorManager() {
 #endif
 }
 
-// ==================== INITIALISATION I2C ====================
-// Le bus n'est démarré que s'il y a au moins un capteur I2C câblé.
+// ==================== I2C INIT ====================
+// The bus is only started when at least one I2C sensor is wired.
 bool SensorManager::initI2C(uint8_t sda, uint8_t scl) {
 #if !defined(HAS_OXYGEN) && !defined(HAS_IMU)
     (void)sda;
     (void)scl;
-    Serial.println("[SensorManager] Aucun capteur I2C déclaré -> I2C ignoré");
+    Serial.println("[SensorManager] No I2C sensor declared -> I2C skipped");
     return true;
 #else
-    Serial.print("[SensorManager] Initialisation I2C... ");
+    Serial.print("[SensorManager] I2C init... ");
     bool success = Wire.begin(sda, scl);
     delay(100);
     if (success) {
@@ -51,13 +51,13 @@ bool SensorManager::initI2C(uint8_t sda, uint8_t scl) {
 #endif
 }
 
-// ==================== INITIALISATION MAX30102 ====================
+// ==================== MAX30102 INIT ====================
 bool SensorManager::initMAX30102() {
 #ifndef HAS_OXYGEN
-    Serial.println("[SensorManager] HAS_OXYGEN absent -> MAX30102 ignoré");
+    Serial.println("[SensorManager] HAS_OXYGEN missing -> MAX30102 skipped");
     return true;
 #else
-    Serial.print("[SensorManager] Initialisation MAX30102 (Oxymètre)... ");
+    Serial.print("[SensorManager] MAX30102 init (oximeter)... ");
     pMAX30102 = new DFRobot_BloodOxygen_S_I2C(&Wire, I2C_ADDRESS);
     if (!pMAX30102->begin()) {
         Serial.println("[FAIL]");
@@ -71,13 +71,13 @@ bool SensorManager::initMAX30102() {
 #endif
 }
 
-// ==================== INITIALISATION MPU6050 ====================
+// ==================== MPU6050 INIT ====================
 bool SensorManager::initMPU6050() {
 #ifndef HAS_IMU
-    Serial.println("[SensorManager] HAS_IMU absent -> MPU6050 ignoré");
+    Serial.println("[SensorManager] HAS_IMU missing -> MPU6050 skipped");
     return true;
 #else
-    Serial.print("[SensorManager] Initialisation MPU6050 (Accéléromètre)... ");
+    Serial.print("[SensorManager] MPU6050 init (accelerometer)... ");
     pMPU6050 = new MPU6050(MPU6050_ADDRESS);
     pMPU6050->initialize();
     if (!pMPU6050->testConnection()) {
@@ -91,13 +91,13 @@ bool SensorManager::initMPU6050() {
 #endif
 }
 
-// ==================== PRÉPARATION À LA VEILLE ====================
+// ==================== SLEEP PREPARATION ====================
 void SensorManager::prepareSleep() {
-    Serial.println("[SensorManager] Préparation à la veille...");
+    Serial.println("[SensorManager] Preparing for sleep...");
 #ifdef HAS_OXYGEN
     if (pMAX30102) {
         pMAX30102->sensorEndCollect();
-        Serial.println("[SensorManager] MAX30102 -> arrêt collecte");
+        Serial.println("[SensorManager] MAX30102 -> collection stopped");
     }
 #endif
 #ifdef HAS_IMU
@@ -107,20 +107,20 @@ void SensorManager::prepareSleep() {
     }
 #endif
 #if !defined(HAS_OXYGEN) && !defined(HAS_IMU)
-    Serial.println("[SensorManager] Aucun capteur déclaré -> rien à faire");
+    Serial.println("[SensorManager] No sensor declared -> nothing to do");
 #endif
 }
 
-// ==================== MISE À JOUR DES LECTURES ====================
-// Chaque capteur a sa moitié indépendante : sans son flag, on retombe sur les
-// valeurs simulées (utiles pour tester le BLE / l'appli sans le matériel).
+// ==================== READING UPDATE ====================
+// Each sensor has its own independent half: without its flag we fall back to
+// simulated values (handy to test BLE / the app without the hardware).
 void SensorManager::updateReadings() {
 #ifdef HAS_OXYGEN
     if (pMAX30102) {
         pMAX30102->getHeartbeatSPO2();
-        // Le capteur renvoie -1 quand il n'a rien de valable : sans ce passage
-        // par sanitizeReading(), le -1 devient 255 dans un uint8_t et part tel
-        // quel jusqu'au backend. Le protocole dit 0 = pas de lecture.
+        // The sensor returns -1 when it has nothing valid: without going
+        // through sanitizeReading(), that -1 becomes 255 in a uint8_t and
+        // travels as is up to the backend. The protocol says 0 = no reading.
         lastHeartRate = sanitizeReading(pMAX30102->_sHeartbeatSPO2.Heartbeat, MAX_PLAUSIBLE_HR);
         lastSpO2 = sanitizeReading(pMAX30102->_sHeartbeatSPO2.SPO2, MAX_PLAUSIBLE_SPO2);
     }
@@ -143,7 +143,7 @@ void SensorManager::updateReadings() {
 #endif
 }
 
-// ==================== DÉTECTION DE PAS ====================
+// ==================== STEP DETECTION ====================
 #ifdef HAS_IMU
 void SensorManager::detectSteps() {
     accelMagnitude = sqrt(
@@ -157,7 +157,7 @@ void SensorManager::detectSteps() {
             stepCounter++;
             isMoving = true;
             #ifdef DEBUG_STEPS
-            Serial.print("[STEP] Pas détecté! Total: ");
+            Serial.print("[STEP] Step detected! Total: ");
             Serial.println(stepCounter);
             #endif
         }

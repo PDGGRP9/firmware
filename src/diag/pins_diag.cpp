@@ -1,28 +1,28 @@
-// Sketch de diagnostic matériel — PAS le firmware du bracelet.
-// Se compile seulement dans l'env "esp32-s3-diag" (voir platformio.ini).
+// Hardware diagnostic sketch - NOT the bracelet firmware.
+// Only built in the "esp32-s3-diag" env (see platformio.ini).
 //
-// But : séparer le problème matériel du problème logiciel avant de toucher au
-// firmware. Il affiche l'état brut du bouton D9 dans les trois modes de tirage
-// et fait clignoter la LED D10 en HIGH puis LOW pour trancher sa polarité.
+// Goal: separate a hardware problem from a software one before touching the
+// firmware. It prints the raw D9 button state in the three pull modes and
+// blinks the D10 LED HIGH then LOW to settle its polarity.
 //
-// Lecture attendue, bouton NON câblé :  pullup=1  pulldown=0  (float saute)
-//   GPIO8 ponté à GND  -> pullup=0
-//   GPIO8 ponté à 3V3  -> pulldown=1
-// Si la LED ne s'allume dans AUCUN des deux états : le défaut est matériel
-// (LED absente, montée à l'envers, pas de résistance, pas reliée à D10).
+// Expected reading, button NOT wired:  pullup=1  pulldown=0  (float jumps around)
+//   GPIO8 shorted to GND  -> pullup=0
+//   GPIO8 shorted to 3V3  -> pulldown=1
+// If the LED lights up in NEITHER state, the fault is hardware (no LED, wired
+// backwards, no resistor, or not connected to D10).
 
 #include <Arduino.h>
 
 void setup() {
   Serial.begin(115200);
-  delay(3000);  // le temps que le moniteur USB CDC se rattache
-  Serial.println("\n=== DIAG PINS : bouton D9 (GPIO8) / LED D10 (GPIO9) ===");
-  Serial.println("Ponte GPIO8 a GND puis a 3V3 et regarde les valeurs bouger.");
-  Serial.println("Regarde la LED : elle doit s'allumer dans UN des deux etats.\n");
+  delay(3000);  // give the USB CDC monitor time to attach
+  Serial.println("\n=== PINS DIAG: button D9 (GPIO8) / LED D10 (GPIO9) ===");
+  Serial.println("Short GPIO8 to GND then to 3V3 and watch the values move.");
+  Serial.println("Watch the LED: it must light up in ONE of the two states.\n");
 }
 
-// Lit D9 dans les trois modes. Le mode de pin est reconfiguré à chaque lecture :
-// c'est lent mais ça donne les trois réponses d'un coup sans recompiler.
+// Reads D9 in the three modes. The pin mode is reconfigured on every read:
+// slow, but it gives the three answers at once without recompiling.
 void readButton() {
   pinMode(D9, INPUT);
   int floating = digitalRead(D9);
@@ -39,10 +39,10 @@ void loop() {
   pinMode(D10, OUTPUT);
 
   digitalWrite(D10, HIGH);
-  Serial.println("--- D10 = HIGH (LED allumee ?) ---");
+  Serial.println("--- D10 = HIGH (LED on?) ---");
   for (uint8_t i = 0; i < 5; ++i) { readButton(); delay(300); }
 
   digitalWrite(D10, LOW);
-  Serial.println("--- D10 = LOW (LED allumee ?) ---");
+  Serial.println("--- D10 = LOW (LED on?) ---");
   for (uint8_t i = 0; i < 5; ++i) { readButton(); delay(300); }
 }

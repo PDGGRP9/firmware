@@ -8,25 +8,24 @@
 #include "logic/measurement.h"
 #include "logic/time_source.h"
 
-// ==================== OBJETS GLOBAUX ====================
+// ==================== GLOBAL OBJECTS ====================
 BLEManager bleManager;
 SensorManager sensorManager;
 PowerManager powerManager;
 Storage storage;
-// Le bracelet n'a pas d'horloge : l'app lui écrit l'heure à chaque connexion.
+// The bracelet has no clock: the app writes the time on every connection.
 TimeSource timeSource;
 
 bool init_success = true;
 uint8_t error_code = 0x1;
 unsigned long lastReadTime = 0;
 
-// ==================== LED D'ÉTAT (D10) ====================
-// LED externe câblée en actif haut (voir STATUS_LED_ON dans config.h) : allumée
-// en fonctionnement normal, 4 clignotements au passage en veille. Sans
-// HAS_STATUS_LED (LED pas câblée), ces fonctions ne font rien : les appels dans
-// setup/loop restent identiques.
-// À ne pas confondre avec LED_BUILTIN (GPIO21), la LED orange de la carte, qui
-// elle est actif BAS : LOW l'allume, HIGH l'éteint.
+// ==================== STATUS LED (D10) ====================
+// External LED wired active high (see STATUS_LED_ON in config.h): on during
+// normal operation, 4 blinks when going to sleep. Without HAS_STATUS_LED (LED
+// not wired) these functions do nothing, so the calls in setup/loop stay the same.
+// Not to be confused with LED_BUILTIN (GPIO21), the board's orange LED, which is
+// active LOW: LOW turns it on, HIGH turns it off.
 #ifdef HAS_STATUS_LED
 void statusLedInit() {
   pinMode(STATUS_LED_PIN, OUTPUT);
@@ -36,10 +35,9 @@ void statusLedInit() {
 void statusLedOn()  { digitalWrite(STATUS_LED_PIN, STATUS_LED_ON); }
 void statusLedOff() { digitalWrite(STATUS_LED_PIN, STATUS_LED_OFF); }
 
-// Clignotement « signe de vie », appelé à chaque tour de loop(). Contrairement à
-// blinkSleepSignal(), interdit de bloquer ici : le BLE et les capteurs doivent
-// continuer à tourner. Une LED qui alterne = la loop tourne ; une LED figée
-// (allumée ou éteinte) = la carte est coincée quelque part.
+// "Alive" blink, called on every loop(). Unlike blinkSleepSignal(), blocking is
+// forbidden here: BLE and the sensors must keep running. A LED that alternates =
+// the loop runs; a frozen LED (on or off) = the board is stuck somewhere.
 unsigned long lastBlinkMs = 0;
 bool statusLedState = false;
 
@@ -50,12 +48,12 @@ void statusLedBlinkTick() {
   digitalWrite(STATUS_LED_PIN, statusLedState ? STATUS_LED_ON : STATUS_LED_OFF);
 }
 
-// Le tick inverse l'état à chaque demi-période : sans ça, après statusLedOn()
-// le premier toggle rallumerait au lieu d'éteindre.
+// The tick flips the state every half period: without this, the first toggle
+// after statusLedOn() would turn it on again instead of off.
 void statusLedMarkOn() { statusLedState = true; lastBlinkMs = millis(); }
 
-// 4 clignotements = « je passe en veille ». Bloquant volontairement : on est
-// déjà en train de s'endormir, plus rien d'autre ne tourne.
+// 4 blinks = "going to sleep". Blocking on purpose: we are already falling
+// asleep, nothing else runs any more.
 void blinkSleepSignal() {
   for (uint8_t i = 0; i < SLEEP_BLINK_COUNT; ++i) {
     statusLedOff();
@@ -74,16 +72,16 @@ inline void statusLedMarkOn() {}
 inline void blinkSleepSignal() {}
 #endif // HAS_STATUS_LED
 
-// ==================== BOUTON / LONG PRESS ====================
-// Tout ce bloc dépend du bouton câblé sur D9 (GPIO8) vers GND : sans
-// HAS_POWER_BUTTON, il n'y a rien à lire et la veille n'est jamais déclenchée.
+// ==================== BUTTON / LONG PRESS ====================
+// This whole block needs the button wired on D9 (GPIO8) to GND: without
+// HAS_POWER_BUTTON there is nothing to read and sleep is never triggered.
 #ifdef HAS_POWER_BUTTON
-#define LONG_PRESS_DURATION 3000 // 3 secondes
+#define LONG_PRESS_DURATION 3000 // 3 seconds
 
 bool buttonPressed = false;
 unsigned long buttonPressStart = 0;
-// Compteur d'appuis : il dit d'un coup d'oeil si un seul appui a produit
-// plusieurs fronts (rebond mécanique) ou si la pin lit du bruit.
+// Press counter: tells at a glance whether one press produced several edges
+// (mechanical bounce) or whether the pin is reading noise.
 uint32_t buttonTouchCount = 0;
 unsigned long lastReleaseMs = 0;
 
@@ -93,37 +91,36 @@ void checkButtonForSleep() {
   
   if (currentState == BUTTON_ACTIVE_LEVEL) {
     if (!buttonPressed) {
-      // Front ignoré s'il suit de trop près le relâchement précédent : c'est du
-      // rebond, pas un nouvel appui.
+      // Edge ignored when it follows the previous release too closely: that is
+      // bounce, not a new press.
       if (millis() - lastReleaseMs < BUTTON_DEBOUNCE_MS) return;
 
       buttonPressed = true;
       buttonPressStart = millis();
       ++buttonTouchCount;
-      // Sans cette trace, un bouton qui ne réagit pas est indébuggable : on ne
-      // sait pas distinguer « pas de contact » de « appui pas assez long ».
-      // Elle s'imprime à côté des lignes [STATE] du heartbeat BLE.
-      Serial.printf("[BTN] touched (n=%lu, t=%lu ms) -> maintiens 3 s pour la veille\n",
+      // Without this trace an unresponsive button is impossible to debug: we
+      // cannot tell "no contact" from "press too short". It shows up next to
+      // the [STATE] lines of the BLE heartbeat.
+      Serial.printf("[BTN] touched (n=%lu, t=%lu ms) -> hold 3 s to sleep\n",
                     (unsigned long)buttonTouchCount, buttonPressStart);
     } else {
-      if (millis() - buttonPressStart >= LONG_PRESS_DURATION) { // Appui long détecté
-        Serial.println("[Main] Appui long détecté (3s) -> Mise en veille prolongée");
+      if (millis() - buttonPressStart >= LONG_PRESS_DURATION) { // Long press detected
+        Serial.println("[Main] Long press detected (3s) -> entering deep sleep");
 
-        digitalWrite(LED_BUILTIN, HIGH);  // actif bas : HIGH éteint la LED carte
-        blinkSleepSignal();  // retour visuel immédiat sur l'appui long
-        // Le tampon RAM doit atterrir en flash : il n'est pas conservé en veille.
+        digitalWrite(LED_BUILTIN, HIGH);  // active low: HIGH turns the board LED off
+        blinkSleepSignal();  // immediate visual feedback on the long press
+        // The RAM buffer must reach flash: it is not kept across deep sleep.
         storage.flush();
         delay(200);
 
-        // Mise en veille prolongée
         sensorManager.prepareSleep();
         powerManager.enterDeepSleep();
       }
     }
-  } else if (buttonPressed) { // Bouton relâché trop tôt
-    Serial.print("[Main] Appui relâché après ");
+  } else if (buttonPressed) { // Button released too early
+    Serial.print("[Main] Press released after ");
     Serial.print(millis() - buttonPressStart);
-    Serial.println(" ms (< 3000) -> pas de veille");
+    Serial.println(" ms (< 3000) -> no sleep");
     buttonPressed = false;
     lastReleaseMs = millis();
   }
@@ -143,34 +140,34 @@ void logResult(const char* stepName, bool passed, const char* detail) {
 // ==================== SETUP ====================
 void setup() {
   Serial.begin(115200);
-  delay(3000); // Attente pour le moniteur série
+  delay(3000); // wait for the serial monitor to attach
 
-  // Vérifier la cause du réveil
+  // Why did we boot: cold start or button wake-up?
   esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
   if (wakeup_reason == ESP_SLEEP_WAKEUP_EXT0) {
-    Serial.println("[Setup] Réveil depuis veille prolongée (bouton)");
+    Serial.println("[Setup] Woke up from deep sleep (button)");
   } else {
-    Serial.println("[Setup] Démarrage normal");
+    Serial.println("[Setup] Normal start");
   }
 
   Serial.println("\n=====================================");
-  Serial.println("   INITIALISATION BRASCO - v1.0      ");
+  Serial.println("   BRASCO INIT - v1.0               ");
   Serial.println("=====================================");
   Serial.print("Device ID: ");
   Serial.println(DEV_ID);
 
   pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, HIGH);  // actif bas : éteinte tant que l'init tourne
-  statusLedInit();  // éteinte tant que l'init n'a pas réussi
+  digitalWrite(LED_BUILTIN, HIGH);  // active low: off while init runs
+  statusLedInit();  // stays off until init succeeds
 #ifdef HAS_POWER_BUTTON
-  // PULLUP obligatoire : en INPUT nu la pin flotte et lit du bruit, ce qui
-  // rendait l'appui long soit indétectable soit déclenché au hasard.
+  // PULLUP is mandatory: as plain INPUT the pin floats and reads noise, which
+  // made the long press either undetectable or randomly triggered.
   pinMode(BUTTON_PIN, INPUT_PULLUP);
 #endif
 
   powerManager.init();
 
-  // === Initialisation I2C et capteurs ===
+  // === I2C and sensors ===
   if (!sensorManager.initI2C(SDA_PIN, SCL_PIN)) {
     init_success = false;
     error_code = ERR_I2C;
@@ -186,13 +183,13 @@ void setup() {
     error_code = ERR_MPU6050;
   }
 
-  // === Initialisation du stockage ===
+  // === Storage ===
   if (!storage.begin()) {
     init_success = false;
     error_code = ERR_STORAGE;
   }
 
-  // === Initialisation BLE ===
+  // === BLE ===
   if (!bleManager.initialize(&storage, &timeSource)) {
     init_success = false;
     error_code = ERR_BLE_INIT;
@@ -203,15 +200,15 @@ void setup() {
     error_code = ERR_BLE_ADV;
   }
 
-  // === Résumé ===
+  // === Summary ===
   Serial.println("\n=====================================");
   if (init_success) {
-    Serial.println("  ✓ SYSTÈME PRÊT");
-    digitalWrite(LED_BUILTIN, LOW);  // actif bas : LOW l'allume
-    statusLedOn();      // mode normal
-    statusLedMarkOn();  // le clignotement de loop() reprend depuis cet état
+    Serial.println("  OK - SYSTEM READY");
+    digitalWrite(LED_BUILTIN, LOW);  // active low: LOW turns it on
+    statusLedOn();      // normal mode
+    statusLedMarkOn();  // the loop() blink restarts from this state
   } else {
-    Serial.print("  ✗ ERREUR: 0x");
+    Serial.print("  ERROR: 0x");
     Serial.println(error_code, HEX);
   }
   Serial.println("=====================================\n");
@@ -221,20 +218,21 @@ void setup() {
 
 // ==================== LOOP ====================
 void loop() {
-  // Vérifier l'appui long à chaque itération, même en cas d'erreur
+  // Check the long press on every iteration, even when init failed
 #ifdef HAS_POWER_BUTTON
   checkButtonForSleep();
 #endif
 
-  // === Gestion des erreurs et réinitialisation ===
+  // === Error blink and retry loop ===
+  // The error code is blinked on the board LED, then the failed step is retried.
   while (!init_success) {
     for (int i = 0; i < error_code; ++i) {
-      digitalWrite(LED_BUILTIN, LOW);   // allumée (GPIO21 actif bas)
+      digitalWrite(LED_BUILTIN, LOW);   // on (GPIO21 is active low)
       delay(200);
-      digitalWrite(LED_BUILTIN, HIGH);  // éteinte
+      digitalWrite(LED_BUILTIN, HIGH);  // off
       delay(200);
 #ifdef HAS_POWER_BUTTON
-      checkButtonForSleep(); // on garde la main sur le bouton même en erreur
+      checkButtonForSleep(); // the button still works while in error
 #endif
     }
 
@@ -288,28 +286,28 @@ void loop() {
         }
         break;
       default:
-        Serial.println("Erreur inconnue.");
+        Serial.println("Unknown error.");
         break;
     }
 
     if (init_success) {
-      Serial.println("Système réinitialisé avec succès.");
+      Serial.println("System successfully re-initialized.");
     } else {
-      Serial.print("Nouvelle tentative échouée. Code d'erreur: 0x");
+      Serial.print("Retry failed. Error code: 0x");
       Serial.println(error_code, HEX);
     }
     delay(3000);
   }
 
-  // Init OK et loop qui tourne : la LED d'état clignote. Placé après la boucle
-  // d'erreur, donc un clignotement régulier signifie bien « tout va bien ».
+  // Init OK and loop running: the status LED blinks. Placed after the error
+  // loop, so a regular blink really means "all good".
   statusLedBlinkTick();
 
-  // === Protocole BLE (synchro du backlog, ACK, heure) ===
-  // Toujours appelé : les callbacks NimBLE ne font que déposer les commandes.
+  // === BLE protocol (backlog sync, ACK, time) ===
+  // Always called: the NimBLE callbacks only drop off the commands.
   bleManager.tick();
 
-  // === Lecture et envoi des données ===
+  // === Read and send the data ===
   if (millis() - lastReadTime >= READ_INTERVAL) {
     lastReadTime = millis();
 
@@ -319,17 +317,17 @@ void loop() {
     uint8_t spo2 = sensorManager.getSpO2();
     uint32_t steps = sensorManager.getSteps();
 
-    // La mesure part en direct si l'app est en LIVE. Sinon — pas d'app,
-    // synchro en cours, notify refusé — elle va en flash et deviendra du
-    // backlog. Rien n'est jamais jeté (cf. README, invariante centrale).
+    // The measurement goes out live when the app is in LIVE. Otherwise - no
+    // app, sync in progress, notify refused - it goes to flash and becomes
+    // backlog. Nothing is ever thrown away (see README, central invariant).
     Measurement m;
     m.ts    = timeSource.now(millis());
     m.hr    = hr;
     m.spo2  = spo2;
     m.steps = (steps > 65535) ? 65535 : (uint16_t)steps;
 
-    // Les mesures sont toujours affichées sur le série, connecté ou non :
-    // c'est le seul moyen de vérifier les capteurs sans téléphone appairé.
+    // Measurements are always printed on serial, connected or not: it is the
+    // only way to check the sensors without a paired phone.
     if (bleManager.sendLive(m)) {
       Serial.print("[BLE] Data sent");
     } else {

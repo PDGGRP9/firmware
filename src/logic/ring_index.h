@@ -3,30 +3,29 @@
 
 #include <stdint.h>
 
-// Arithmétique d'un tampon circulaire : quel slot écrire, quel slot lire.
-// Aucun accès flash ici, volontairement — c'est ce qui rend la classe testable
-// sur PC (`pio test -e native`). Storage se charge des vraies lectures/écritures.
+// Circular buffer arithmetic: which slot to write, which slot to read.
+// No flash access here on purpose - that is what makes the class testable on PC
+// (`pio test -e native`). Storage does the real reads and writes.
 //
-// head_ = index du plus ancien élément non acquitté. Le tail est déduit
-// (head_ + count_), on ne le stocke pas : deux compteurs à garder cohérents,
-// c'est un de trop.
+// head_ = index of the oldest un-ACKed item. The tail is derived (head_ +
+// count_) and never stored: two counters to keep in sync is one too many.
 class RingIndex {
 public:
     explicit RingIndex(uint32_t capacity) : capacity_(capacity) {}
 
-    // Réserve le slot suivant. Si le ring est plein, on écrase la plus vieille
-    // mesure (le récent vaut mieux que l'ancien) et on l'enregistre dans dropped_.
+    // Reserves the next slot. When the ring is full we overwrite the oldest
+    // measurement (recent beats old) and count it in dropped_.
     uint32_t push();
 
-    // Slot du n-ième plus ancien élément (offset 0 = le plus ancien).
+    // Slot of the n-th oldest item (offset 0 = the oldest).
     uint32_t slotAt(uint32_t offset) const;
 
-    // Libère les n plus anciens : appelé UNIQUEMENT après l'ACK de l'app.
+    // Frees the n oldest ones: called ONLY after the app's ACK.
     void release(uint32_t n);
 
-    // Recharge l'état depuis la NVS après un reboot. Valeurs incohérentes
-    // (flash corrompue, capacité changée) -> on repart d'un ring vide plutôt
-    // que de lire n'importe où dans le fichier.
+    // Reloads the state from NVS after a reboot. Inconsistent values (corrupted
+    // flash, capacity changed) -> start from an empty ring rather than read
+    // anywhere in the file.
     void restore(uint32_t head, uint32_t count);
 
     uint32_t head() const { return head_; }
@@ -39,7 +38,7 @@ private:
     uint32_t capacity_;
     uint32_t head_ = 0;
     uint32_t count_ = 0;
-    uint32_t dropped_ = 0;  // mesures perdues par écrasement, remontées dans les logs
+    uint32_t dropped_ = 0;  // measurements lost by overwrite, reported in the logs
 };
 
 #endif // RING_INDEX_H

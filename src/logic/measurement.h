@@ -4,64 +4,64 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Une mesure du bracelet, telle qu'elle est stockée en flash ET envoyée en BLE.
-// C'est le seul format de données du protocole : le live et l'historique
-// utilisent exactement le même enregistrement.
+// One bracelet measurement, as stored in flash AND sent over BLE.
+// It is the only data format of the protocol: live and history use the exact
+// same record.
 struct Measurement {
-    uint32_t ts;     // epoch UTC en secondes ; 0 = l'app n'a pas encore donné l'heure
-    uint8_t  hr;     // BPM, 0 = pas de lecture
-    uint8_t  spo2;   // %, 0 = pas de lecture
-    uint16_t steps;  // cumul de pas, tronqué à 65535
+    uint32_t ts;     // UTC epoch in seconds; 0 = the app has not given the time yet
+    uint8_t  hr;     // BPM, 0 = no reading
+    uint8_t  spo2;   // %, 0 = no reading
+    uint16_t steps;  // step total, clamped to 65535
 };
 
-// Taille sur le fil et en flash. On l'écrit à la main plutôt que sizeof() :
-// le compilateur peut ajouter du padding, et ça décalerait tout le fichier ring.
+// Size on the wire and in flash. Hardcoded rather than sizeof(): the compiler
+// may add padding, which would shift the whole ring file.
 constexpr size_t MEASUREMENT_SIZE = 8;
 
-// Un paquet d'historique = [type][count][seqLo][seqHi] puis les mesures.
-// Le numéro de séquence est renvoyé tel quel dans l'ACK : sans lui, un ACK en
-// retard serait pris pour celui du paquet courant et purgerait des mesures que
-// l'app n'a jamais reçues.
+// A history packet = [type][count][seqLo][seqHi] then the measurements.
+// The sequence number comes back untouched in the ACK: without it, a late ACK
+// would be taken for the current packet's and would drop measurements the app
+// never received.
 constexpr size_t  HISTORY_HEADER_SIZE = 4;
-// 0x11 et pas 0x01 : une app d'avant le numéro de séquence lirait les mesures
-// deux octets trop tôt et acquitterait des données décalées, sans rien voir.
-// Avec un type qu'elle ne connaît pas, elle refuse le paquet et ça se voit.
-constexpr uint8_t HISTORY_TYPE_DATA   = 0x11;  // il reste des mesures
-constexpr uint8_t HISTORY_TYPE_END    = 0xFF;  // stock vide, l'app peut passer en live
+// 0x11 and not 0x01: an app older than the sequence number would read the
+// measurements two bytes too early and ACK shifted data without noticing.
+// With a type it does not know, it rejects the packet and we see it.
+constexpr uint8_t HISTORY_TYPE_DATA   = 0x11;  // measurements left
+constexpr uint8_t HISTORY_TYPE_END    = 0xFF;  // backlog empty, the app can go live
 
-// Commandes reçues sur la caractéristique SYNC_CTRL.
-// START et STOP tiennent en 1 octet, ACK en fait 3 : [0x02][seqLo][seqHi].
+// Commands received on the SYNC_CTRL characteristic.
+// START and STOP are 1 byte, ACK is 3: [0x02][seqLo][seqHi].
 constexpr uint8_t SYNC_CMD_START = 0x01;
 constexpr uint8_t SYNC_CMD_ACK   = 0x02;
 constexpr uint8_t SYNC_CMD_STOP  = 0x03;
 
-// Sous ce seuil, `ts` n'est pas un epoch mais l'uptime du bracelet en secondes :
-// la mesure a été prise avant que l'app ait donné l'heure. Un epoch réel est
-// forcément au-dessus (sept. 2020), un uptime ne l'atteint jamais. L'app Android
-// applique la même règle (BraceletMeasurementCodec.TS_EPOCH_MIN).
+// Below this threshold, `ts` is not an epoch but the bracelet uptime in
+// seconds: the measurement was taken before the app gave the time. A real epoch
+// is always above (Sept. 2020), an uptime never reaches it. The Android app
+// applies the same rule (BraceletMeasurementCodec.TS_EPOCH_MIN).
 constexpr uint32_t TS_EPOCH_MIN = 1600000000u;
 
-// Le driver du MAX30102 renvoie -1 quand il n'a pas de lecture valable (doigt
-// absent, signal trop bruité). Rangé dans un uint8_t, ce -1 devient 255 : une
-// valeur que le protocole n'a jamais prévue, et que le backend refuse. On
-// ramène donc toute lecture aberrante à 0, le « pas de lecture » du contrat.
-// `maxPlausible` : 250 BPM et 100 % SpO2, au-delà c'est du bruit.
+// The MAX30102 driver returns -1 when it has no valid reading (no finger, too
+// much noise). Stored in a uint8_t that -1 becomes 255: a value the protocol
+// never planned for and the backend rejects. So any implausible reading is
+// brought back to 0, the contract's "no reading".
+// `maxPlausible`: 250 BPM and 100 % SpO2, above that it is noise.
 uint8_t sanitizeReading(int32_t raw, uint8_t maxPlausible);
 
-constexpr uint8_t MAX_PLAUSIBLE_HR   = 250;  // au-dessus, c'est le capteur qui délire
-constexpr uint8_t MAX_PLAUSIBLE_SPO2 = 100;  // un pourcentage, forcément
+constexpr uint8_t MAX_PLAUSIBLE_HR   = 250;  // above this the sensor is raving
+constexpr uint8_t MAX_PLAUSIBLE_SPO2 = 100;  // a percentage, by definition
 
-// Little-endian explicite, octet par octet : le firmware et Android doivent
-// lire pareil quelle que soit l'architecture. `out` doit faire MEASUREMENT_SIZE.
+// Explicit little-endian, byte by byte: firmware and Android must read the same
+// thing whatever the architecture. `out` must be MEASUREMENT_SIZE long.
 void encodeMeasurement(const Measurement& m, uint8_t* out);
 Measurement decodeMeasurement(const uint8_t* in);
 
-// Écrit [0x11][count][seqLo][seqHi] + count mesures dans `out`.
-// Retourne le nombre d'octets écrits.
+// Writes [0x11][count][seqLo][seqHi] + count measurements into `out`.
+// Returns the number of bytes written.
 size_t buildHistoryPacket(const Measurement* items, uint8_t count, uint16_t seq, uint8_t* out);
 
-// Écrit [0xFF][0][0][0] : « je n'ai plus rien en stock ». Retourne 4.
-// Ce paquet n'est jamais acquitté, sa séquence vaut donc 0.
+// Writes [0xFF][0][0][0]: "nothing left in storage". Returns 4.
+// This packet is never ACKed, so its sequence is 0.
 size_t buildHistoryEndPacket(uint8_t* out);
 
 #endif // MEASUREMENT_H

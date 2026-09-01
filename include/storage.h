@@ -7,38 +7,38 @@
 #include "logic/measurement.h"
 #include "logic/ring_index.h"
 
-// Stockage des mesures qui n'ont pas encore été acquittées par l'app.
+// Backlog of measurements the app has not acknowledged yet.
 //
-// Deux étages :
-//   1. un tampon RAM de RAM_BATCH mesures. On n'écrit pas en flash pour une
-//      seule mesure toutes les 4 s, ça userait la flash pour rien.
-//   2. un fichier de taille fixe en LittleFS (STORAGE_FILE) utilisé comme
-//      tampon circulaire : on se place par seek() au slot que donne RingIndex
-//      et on écrit 8 octets. Pas de réécriture du fichier entier.
+// Two stages:
+//   1. a RAM buffer of RAM_BATCH measurements. Writing flash for one
+//      measurement every 4 s would wear it out for nothing.
+//   2. a fixed-size LittleFS file (STORAGE_FILE) used as a circular buffer:
+//      we seek() to the slot given by RingIndex and write 8 bytes. The whole
+//      file is never rewritten.
 //
-// Les index head/count vivent en NVS (Preferences) pour survivre au reboot et
-// au deep sleep. Sans ça, un redémarrage perdrait tout le backlog.
+// head/count live in NVS (Preferences) so they survive a reboot or deep sleep;
+// without that, a restart would lose the whole backlog.
 //
-// L'invariante du protocole : rien n'est purgé avant confirm(), et confirm()
-// n'est appelé qu'après l'ACK de l'app.
+// Protocol invariant: nothing is dropped before confirm(), and confirm() is
+// only called once the app has ACKed.
 class Storage {
 public:
     Storage() : ring_(RING_CAPACITY), ramBuffer_{} {}
 
-    // Monte LittleFS, crée/agrandit le fichier si besoin, recharge les index.
+    // Mounts LittleFS, creates/grows the file if needed, reloads the indexes.
     bool begin();
 
-    // Ajoute une mesure (va d'abord en RAM, flush automatique quand plein).
+    // Adds a measurement (goes to RAM first, auto-flushes when full).
     bool append(const Measurement& m);
 
-    // Force l'écriture du tampon RAM en flash.
+    // Forces the RAM buffer out to flash.
     bool flush();
 
-    // Lit jusqu'à `max` mesures parmi les plus anciennes, SANS les supprimer.
-    // Retourne le nombre lu.
+    // Reads up to `max` of the oldest measurements WITHOUT removing them.
+    // Returns how many were read.
     uint8_t readBatch(Measurement* out, uint8_t max);
 
-    // Supprime les n plus anciennes. À n'appeler QU'APRÈS l'ACK de l'app.
+    // Drops the n oldest ones. Call ONLY after the app's ACK.
     void confirm(uint8_t n);
 
     uint32_t pending() const { return ring_.count() + ramCount_; }

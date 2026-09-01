@@ -5,41 +5,39 @@
 
 #include "measurement.h"
 
-// Le bracelet n'a pas d'horloge : au boot il ne sait pas quelle heure il est.
-// L'app lui écrit l'epoch UTC sur la caractéristique TIME à chaque connexion ;
-// entre deux synchros on extrapole avec millis().
+// The bracelet has no clock: at boot it does not know what time it is. The app
+// writes the UTC epoch on the TIME characteristic at every connection; between
+// two syncs we extrapolate with millis().
 //
-// Header-only et sans Arduino : millis() est passé en paramètre, ce qui permet
-// de tester le wrap sur PC sans attendre 49 jours.
+// Header-only and Arduino-free: millis() is passed as a parameter, so the wrap
+// can be tested on PC without waiting 49 days.
 class TimeSource {
 public:
-    // Appelé quand l'app écrit TIME. `nowMs` = millis() au même instant.
+    // Called when the app writes TIME. `nowMs` = millis() at the same instant.
     void sync(uint32_t epochSeconds, uint32_t nowMs) {
         epochBase_ = epochSeconds;
         msBase_ = nowMs;
         synced_ = true;
     }
 
-    // Tant que l'app n'a pas donné l'heure, on renvoie l'uptime en secondes
-    // plutôt que 0. Deux raisons : des mesures toutes horodatées 0 partagent le
-    // même ts, et la dédup de l'app par (deviceUid, ts) n'en garderait qu'une ;
-    // et l'uptime est justement ce qu'il faut à resolve() pour retrouver leur
-    // vraie heure une fois la synchro faite. TS_EPOCH_MIN les distingue.
+    // Before the app gives the time we return the uptime in seconds, not 0:
+    // measurements all stamped 0 would share the same ts and the app's dedup by
+    // (deviceUid, ts) would keep only one. The uptime is also what resolve()
+    // needs later to recover their real time. TS_EPOCH_MIN tells them apart.
     uint32_t now(uint32_t nowMs) const {
         if (!synced_) return nowMs / 1000u;
-        // Soustraction en uint32_t : correcte même quand millis() a wrappé.
+        // uint32_t subtraction: still correct once millis() has wrapped.
         uint32_t elapsedMs = nowMs - msBase_;
         return epochBase_ + elapsedMs / 1000u;
     }
 
-    // Rend son epoch réel à une mesure prise avant la synchro : elle porte son
-    // uptime, et on connaît maintenant l'uptime du point de synchro, donc on
-    // remonte le temps depuis ce point. Un ts déjà epoch ressort inchangé.
+    // Gives back its real epoch to a measurement taken before the sync: it
+    // carries its uptime, and we now know the uptime at the sync point, so we
+    // walk back from there. A ts that is already an epoch comes out unchanged.
     //
-    // Limite connue, non gérée : un uptime postérieur au point de synchro vient
-    // forcément d'un boot précédent (bracelet redémarré avec du stock non vidé),
-    // et sa base n'existe plus. On le laisse tel quel — l'app lui donnera son
-    // heure de réception.
+    // Known limitation, not handled: an uptime later than the sync point can
+    // only come from a previous boot (reboot with a non-empty backlog) and its
+    // base is gone. We leave it as is - the app will stamp it on reception.
     uint32_t resolve(uint32_t ts) const {
         if (!synced_ || ts >= TS_EPOCH_MIN) return ts;
         uint32_t syncUptime = msBase_ / 1000u;

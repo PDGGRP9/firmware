@@ -5,8 +5,8 @@ uint32_t RingIndex::push() {
     if (count_ < capacity_) {
         count_++;
     } else {
-        // Plein : le slot qu'on écrit est justement celui du plus ancien,
-        // donc head_ avance d'un cran et cette mesure-là est perdue.
+        // Full: the slot we write is exactly the oldest one, so head_ moves up
+        // by one and that measurement is lost.
         head_ = (head_ + 1) % capacity_;
         dropped_++;
     }

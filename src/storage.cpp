@@ -6,30 +6,30 @@
 #include "config.h"
 
 bool Storage::begin() {
-    // true = formate si le montage échoue (première utilisation, ou partition
-    // corrompue). Sans ça le bracelet resterait bloqué sans stockage.
+    // true = format when the mount fails (first use, or corrupted partition).
+    // Without it the bracelet would be stuck with no storage at all.
     if (!LittleFS.begin(true)) {
-        Serial.println("[FAIL] Storage - montage LittleFS impossible");
+        Serial.println("[FAIL] Storage - LittleFS mount failed");
         return false;
     }
 
-    // Le fichier ring a une taille fixe : on l'alloue en entier au premier
-    // boot pour ne jamais tomber en "disque plein" en pleine mesure.
+    // The ring file has a fixed size: it is fully allocated on the first boot
+    // so we never hit a "disk full" in the middle of a measurement.
     const size_t wantedSize = (size_t)RING_CAPACITY * MEASUREMENT_SIZE;
     File f = LittleFS.open(STORAGE_FILE, LittleFS.exists(STORAGE_FILE) ? "r+" : "w+");
     if (!f) {
-        Serial.println("[FAIL] Storage - ouverture de " STORAGE_FILE " impossible");
+        Serial.println("[FAIL] Storage - cannot open " STORAGE_FILE);
         return false;
     }
     if (f.size() < wantedSize) {
-        Serial.print("[Storage] Allocation du fichier ring (");
+        Serial.print("[Storage] Allocating the ring file (");
         Serial.print((unsigned)wantedSize);
-        Serial.println(" octets), premier boot...");
+        Serial.println(" bytes), first boot...");
         uint8_t zeros[MEASUREMENT_SIZE] = {0};
         f.seek(f.size());
         while (f.size() < wantedSize) {
             if (f.write(zeros, MEASUREMENT_SIZE) != MEASUREMENT_SIZE) {
-                Serial.println("[FAIL] Storage - flash pleine pendant l'allocation");
+                Serial.println("[FAIL] Storage - flash full during allocation");
                 f.close();
                 return false;
             }
@@ -45,9 +45,9 @@ bool Storage::begin() {
     ready_ = true;
     Serial.print("[OK] Storage - ");
     Serial.print(ring_.count());
-    Serial.print(" mesures en flash (head=");
+    Serial.print(" measurements in flash (head=");
     Serial.print(ring_.head());
-    Serial.print(", capacite=");
+    Serial.print(", capacity=");
     Serial.print(ring_.capacity());
     Serial.println(")");
     return true;
@@ -68,7 +68,7 @@ bool Storage::flush() {
 
     File f = LittleFS.open(STORAGE_FILE, "r+");
     if (!f) {
-        Serial.println("[Storage] Flush impossible : " STORAGE_FILE " illisible");
+        Serial.println("[Storage] Cannot flush: " STORAGE_FILE " unreadable");
         return false;
     }
 
@@ -79,7 +79,7 @@ bool Storage::flush() {
         encodeMeasurement(ramBuffer_[i], buf);
         f.seek((uint32_t)slot * MEASUREMENT_SIZE);
         if (f.write(buf, MEASUREMENT_SIZE) != MEASUREMENT_SIZE) {
-            Serial.print("[Storage] Ecriture ratee au slot ");
+            Serial.print("[Storage] Write failed at slot ");
             Serial.println(slot);
             break;
         }
@@ -91,7 +91,7 @@ bool Storage::flush() {
 
     Serial.print("[Storage] Flush ");
     Serial.print(written);
-    Serial.print(" mesures -> flash=");
+    Serial.print(" measurements -> flash=");
     Serial.print(ring_.count());
     Serial.print(" drop=");
     Serial.println(ring_.dropped());
@@ -101,8 +101,8 @@ bool Storage::flush() {
 uint8_t Storage::readBatch(Measurement* out, uint8_t max) {
     if (!ready_) return 0;
 
-    // On sert toujours depuis la flash : le tampon RAM y est vidé d'abord pour
-    // que l'ordre des mesures soit celui de leur acquisition.
+    // We always serve from flash: the RAM buffer is flushed there first so the
+    // measurements keep their acquisition order.
     if (ramCount_ > 0) flush();
 
     uint32_t available = ring_.count();
@@ -111,7 +111,7 @@ uint8_t Storage::readBatch(Measurement* out, uint8_t max) {
 
     File f = LittleFS.open(STORAGE_FILE, "r");
     if (!f) {
-        Serial.println("[Storage] Lecture impossible : " STORAGE_FILE " illisible");
+        Serial.println("[Storage] Cannot read: " STORAGE_FILE " unreadable");
         return 0;
     }
 
@@ -132,9 +132,9 @@ void Storage::confirm(uint8_t n) {
     if (!ready_ || n == 0) return;
     ring_.release(n);
     saveIndex();
-    Serial.print("[Storage] Purge de ");
+    Serial.print("[Storage] Dropping ");
     Serial.print(n);
-    Serial.print(" mesures apres ACK -> flash=");
+    Serial.print(" measurements after ACK -> flash=");
     Serial.println(ring_.count());
 }
 

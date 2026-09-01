@@ -5,9 +5,9 @@
 #include <Wire.h>
 #include "config.h"
 
-// Les libs capteur ne sont incluses que si le capteur est déclaré câblé
-// (flags HAS_* de platformio.ini) : sans ça, un env sans le lib_deps
-// correspondant ne compile pas.
+// Sensor libs are included only when the sensor is declared as wired
+// (HAS_* flags in platformio.ini): otherwise an env without the matching
+// lib_deps would not compile.
 #ifdef HAS_OXYGEN
 #include "DFRobot_BloodOxygen_S.h"
 #endif // HAS_OXYGEN
@@ -17,17 +17,18 @@
 #include "MPU6050.h"
 #endif // HAS_IMU
 
+// Reads the I2C sensors (MAX30102 for HR/SpO2, MPU6050 for steps) and keeps
+// the last values. When a sensor is not wired, its values are simulated.
 class SensorManager {
 private:
-    // Toujours présents : ce sont eux qu'on envoie en BLE, qu'ils viennent
-    // d'un vrai capteur ou de la simulation.
+    // Always present: these are what we send over BLE, whether they come from
+    // a real sensor or from the simulation.
     uint8_t  lastHeartRate;
     uint8_t  lastSpO2;
     uint32_t stepCounter;
 
-    // Les membres ci-dessous sont déclarés APRÈS les trois du haut pour que la
-    // liste d'initialisation du constructeur reste dans l'ordre de déclaration
-    // quelle que soit la combinaison de flags (sinon warning -Wreorder).
+    // Declared AFTER the three above so the constructor init list stays in
+    // declaration order whatever the flag combination is (else -Wreorder).
 #ifdef HAS_OXYGEN
     DFRobot_BloodOxygen_S_I2C* pMAX30102;
 #endif // HAS_OXYGEN
@@ -41,19 +42,18 @@ private:
 #endif // HAS_IMU
 
 public:
-    // Constructeur et destructeur
     SensorManager();
     ~SensorManager();
 
-    // Initialisation des capteurs
+    // Sensor init
     bool initI2C(uint8_t sda, uint8_t scl);
     bool initMAX30102();
     bool initMPU6050();
 
-    // Préparer les capteurs pour la mise en veille
+    // Put the sensors in a safe state before deep sleep
     void prepareSleep();
 
-    // Mise à jour des lectures des capteurs
+    // Refresh the cached readings
     void updateReadings();
 
     // Getters
