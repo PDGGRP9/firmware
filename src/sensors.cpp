@@ -146,23 +146,141 @@ void SensorManager::updateReadings() {
 // ==================== STEP DETECTION ====================
 #ifdef HAS_IMU
 void SensorManager::detectSteps() {
-    accelMagnitude = sqrt(
-        (float)lastAx * lastAx +
-        (float)lastAy * lastAy +
-        (float)lastAz * lastAz
-    );
+float gx = lastAx / accelResolution;
+    float gy = lastAy / accelResolution;
+    float gz = lastAz / accelResolution;
 
-    if (accelMagnitude > STEP_THRESHOLD) {
-        if (!isMoving) {
-            stepCounter++;
-            isMoving = true;
+    float magnitude_g = sqrt(gx*gx + gy*gy + gz*gz);
+
+    unsigned long now = millis();
+
+    // === Filtrage passe-bas avec coefficient adaptatif ===
+    // Coefficient plus élevé quand le mouvement est important pour suivre rapidement
+    float dynamicAlpha = LOWPASS_ALPHA;
+    if (abs(magnitude_g - 1.0f) > 0.5f) {
+        dynamicAlpha = 0.6f;  // Réponse plus rapide aux mouvements brusques
+    }
+    
+    filteredMagnitude = (dynamicAlpha * magnitude_g) + ((1.0f - dynamicAlpha) * filteredMagnitude);
+    
+    // === Estimation de la gravité avec filtre plus lent ===
+    gravityEstimate = (GRAVITY_ALPHA * filteredMagnitude) + ((1.0f - GRAVITY_ALPHA) * gravityEstimate);
+
+    // === Calcul de l'accélération dynamique ===
+    float dynamicAccel = filteredMagnitude - gravityEstimate;
+    
+    // === Détection de pas basée sur le croisement de seuil ===
+    // avec hystérésis et machine à états simple
+    
+    static bool stepInProgress = false;
+    static float peakValue = 0.0f;
+    static unsigned long cycleStartTime = 0;
+    
+    // Seuil adaptatif basé sur l'amplitude moyenne des pics récents
+    static float avgPeakAmplitude = STEP_THRESHOLD_HIGH_G;
+    static int peakCount = 0;
+    static float peakSum = 0.0f;
+    
+    // === MACHINE À ÉTATS ===
+    if (!stepInProgress) {
+        // État : ATTENTE D'UN PIC
+        if (dynamicAccel > STEP_THRESHOLD_HIGH_G) {
+            // Début d'un pic potentiel
+            stepInProgress = true;
+            peakValue = dynamicAccel;
+            cycleStartTime = now;
+            
             #ifdef DEBUG_STEPS
-            Serial.print("[STEP] Step detected! Total: ");
-            Serial.println(stepCounter);
+            Serial.printf("[STEP] Pic détecté: %.3fg\n", dynamicAccel);
             #endif
         }
     } else {
-        isMoving = false;
+        // État : PIC EN COURS
+        if (dynamicAccel > peakValue) {
+            // Le pic continue de monter
+            peakValue = dynamicAccel;
+        }
+        
+        // Vérifier si le pic est terminé (retour sous le seuil bas)
+        if (dynamicAccel < STEP_THRESHOLD_LOW_G) {
+            // Pic terminé
+            unsigned long cycleDuration = now - cycleStartTime;
+            
+            // === VALIDATION DU PAS ===
+            // Critères de validation :
+            // 1. Durée minimale entre les pas (anti-rebond)
+            // 2. Amplitude du pic suffisante
+            // 3. Durée du cycle dans une plage raisonnable (0.3s à 2s)
+            
+            bool isStepValid = false;
+            
+            if ((now - lastStepTime) >= MIN_STEP_INTERVAL_MS) {
+                if (cycleDuration >= 200 && cycleDuration <= 2000) {
+                    // Vérifier si l'amplitude est suffisante
+                    if (peakValue > STEP_THRESHOLD_HIGH_G) {
+                        isStepValid = true;
+                        
+                        // Mettre à jour la moyenne des pics
+                        if (peakCount < 10) {
+                            peakCount++;
+                            peakSum += peakValue;
+                        } else {
+                            // Fenêtre glissante simple
+                            peakSum = peakSum * 0.9f + peakValue * 0.1f;
+                        }
+                        avgPeakAmplitude = peakSum / peakCount;
+                    }
+                }
+            }
+            
+            if (isStepValid) {
+                // Incrémenter le compteur de pas
+                stepCounter++;
+                lastStepTime = now;
+                
+                #ifdef DEBUG_STEPS
+                Serial.printf("[STEP] ✅ VALIDÉ | dynAccel=%.3fg | durée=%lums | total=%lu\n", 
+                              peakValue, cycleDuration, stepCounter);
+                #endif
+                
+                // === DÉTECTION D'ACTIVITÉ ===
+                // Si plusieurs pas rapprochés, c'est de la marche rapide ou course
+                if (cycleDuration < 500) {
+                    // Marche rapide ou course
+                    #ifdef DEBUG_STEPS
+                    Serial.println("[STEP] 🏃 Activité intense détectée");
+                    #endif
+                }
+            } else {
+                #ifdef DEBUG_STEPS
+                const char* reason = "inconnue";
+                if ((now - lastStepTime) < MIN_STEP_INTERVAL_MS) {
+                    reason = "intervalle trop court";
+                } else if (cycleDuration < 200) {
+                    reason = "cycle trop court";
+                } else if (cycleDuration > 2000) {
+                    reason = "cycle trop long";
+                } else if (peakValue <= STEP_THRESHOLD_HIGH_G) {
+                    reason = "amplitude insuffisante";
+                }
+                Serial.printf("[STEP] ❌ REJETÉ (%s) | dynAccel=%.3fg | durée=%lums\n", 
+                              reason, peakValue, cycleDuration);
+                #endif
+            }
+            
+            // Réinitialiser la machine à états
+            stepInProgress = false;
+            peakValue = 0.0f;
+        }
+        
+        // Timeout de sécurité pour éviter les blocages
+        if ((now - cycleStartTime) > 2500) {
+            stepInProgress = false;
+            peakValue = 0.0f;
+            #ifdef DEBUG_STEPS
+            Serial.println("[STEP] ⏱️ Timeout - cycle abandonné");
+            #endif
+        }
     }
 }
 #endif // HAS_IMU

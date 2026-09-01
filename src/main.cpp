@@ -20,12 +20,7 @@ bool init_success = true;
 uint8_t error_code = 0x1;
 unsigned long lastReadTime = 0;
 
-// ==================== STATUS LED (D10) ====================
-// External LED wired active high (see STATUS_LED_ON in config.h): on during
-// normal operation, 4 blinks when going to sleep. Without HAS_STATUS_LED (LED
-// not wired) these functions do nothing, so the calls in setup/loop stay the same.
-// Not to be confused with LED_BUILTIN (GPIO21), the board's orange LED, which is
-// active LOW: LOW turns it on, HIGH turns it off.
+// ==================== STATUS LED (D7) ====================
 #ifdef HAS_STATUS_LED
 void statusLedInit() {
   pinMode(STATUS_LED_PIN, OUTPUT);
@@ -35,9 +30,6 @@ void statusLedInit() {
 void statusLedOn()  { digitalWrite(STATUS_LED_PIN, STATUS_LED_ON); }
 void statusLedOff() { digitalWrite(STATUS_LED_PIN, STATUS_LED_OFF); }
 
-// "Alive" blink, called on every loop(). Unlike blinkSleepSignal(), blocking is
-// forbidden here: BLE and the sensors must keep running. A LED that alternates =
-// the loop runs; a frozen LED (on or off) = the board is stuck somewhere.
 unsigned long lastBlinkMs = 0;
 bool statusLedState = false;
 
@@ -48,8 +40,6 @@ void statusLedBlinkTick() {
   digitalWrite(STATUS_LED_PIN, statusLedState ? STATUS_LED_ON : STATUS_LED_OFF);
 }
 
-// The tick flips the state every half period: without this, the first toggle
-// after statusLedOn() would turn it on again instead of off.
 void statusLedMarkOn() { statusLedState = true; lastBlinkMs = millis(); }
 
 // 4 blinks = "going to sleep". Blocking on purpose: we are already falling
@@ -151,7 +141,7 @@ void setup() {
   }
 
   Serial.println("\n=====================================");
-  Serial.println("   BRASCO INIT - v1.0               ");
+  Serial.println("   BRACECO INIT - v1.1               ");
   Serial.println("=====================================");
   Serial.print("Device ID: ");
   Serial.println(DEV_ID);

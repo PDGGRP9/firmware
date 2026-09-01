@@ -36,9 +36,44 @@ private:
 #ifdef HAS_IMU
     MPU6050* pMPU6050;
     int16_t lastAx, lastAy, lastAz;
+    float accelResolution;
     float accelMagnitude;
     bool isMoving;
-    const float STEP_THRESHOLD = 15.0f;
+
+    // --- Variables pour l'algo de détection de pas ---
+    float filteredMagnitude = 1.0f;
+    float gravityEstimate = 1.0f;
+    unsigned long lastStepTime = 0;
+
+    // === Détection par pics multiples + timeout ===
+    int peakCountInWindow = 0;      // Nombre de pics dans la fenêtre temporelle
+    unsigned long windowStartTime = 0;  // Début de la fenêtre d'observation
+
+    // --- Constantes de calibration (À AJUSTER) ---
+    static constexpr float STEP_THRESHOLD_HIGH_G = 0.25f;
+    static constexpr float STEP_THRESHOLD_LOW_G  = 0.10f;
+    static constexpr unsigned long MIN_STEP_INTERVAL_MS = 300;
+    static constexpr float LOWPASS_ALPHA = 0.4f; 
+    static constexpr float GRAVITY_ALPHA = 0.025f; 
+
+    // === Nouveau: Fenêtre glissante d'observation ===
+    static constexpr unsigned long PEAK_WINDOW_MS = 700;
+    static constexpr int MIN_PEAKS_FOR_STEP = 2;
+    static constexpr int MIN_PEAKS_FOR_RAPID = 3;
+
+    // === Anti-rebond (debouncing) ===
+    static constexpr unsigned long DEBOUNCE_WINDOW_MS = 100; 
+
+        // === Nouvelles variables pour la détection améliorée ===
+    static constexpr unsigned long MIN_CYCLE_DURATION_MS = 200;   // Durée minimale d'un cycle de pas
+    static constexpr unsigned long MAX_CYCLE_DURATION_MS = 2000;  // Durée maximale d'un cycle de pas
+    static constexpr float ADAPTIVE_THRESHOLD_FACTOR = 0.7f;      // Facteur pour le seuil adaptatif
+    
+    // Variables pour le suivi des cycles
+    float avgPeakAmplitude;
+    bool stepInProgress;
+    float currentPeakValue;
+    unsigned long currentCycleStart;
 #endif // HAS_IMU
 
 public:
