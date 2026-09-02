@@ -2,7 +2,7 @@
 
 ## Fonctionnement général du bracelet
 
-Bracelet sans écran, sur XIAO ESP32S3. Toutes les 4s il :
+Bracelet sans écran, sur XIAO ESP32-S3. Toutes les 4s il :
 
 1. lit les capteurs (BPM + SpO2 sur le MAX30102 et les pas sur le MPU6050)
 2. fabrique une mesure de 8 octets
@@ -224,21 +224,21 @@ erreur.
 
 ### Installation
 
-- Installer l'extension PlatformIO sur vscode : https://marketplace.visualstudio.com/items?itemName=platformio.platformio-ide
+- Installer l'extension PlatformIO sur vscode :  [PlatformIO](https://marketplace.visualstudio.com/items?itemName=platformio.platformio-ide)
 - ou chercher "PlatformIO IDE" dans les extensions
 
 ### Commande dans le terminal
 
 ```bash
-pio test -e native # pour les tests logique (fonctions, ...), se fait en local
-pio run -e esp32-s3 # build le firmware (en local)
-pio run -e esp32-s3 -t upload # build et flash la carte
-pio run -e esp32-s3 -t upload -t monitor # flash + serial 115200
-pio run -e esp32-s3 -t size             # taille flash/RAM
-pio run -e esp32-s3-ci                  # build "sans capteurs"
-pio device monitor --baud 115200 # voir les logs
-pio check -e esp32-s3 --skip-packages   # cppcheck
-pio run -t clean                        # vide .pio/build
+pio test -e native        # pour les tests logique (fonctions, ...), se fait en local
+pio run -e esp32-s3       # build le firmware (en local)
+pio run -e esp32-s3 -t upload             # build et flash la carte
+pio run -e esp32-s3 -t upload -t monitor  # flash + serial 115200
+pio run -e esp32-s3 -t size               # taille flash/RAM
+pio run -e esp32-s3-ci                    # build "sans capteurs"
+pio device monitor --baud 115200          # voir les logs
+pio check -e esp32-s3 --skip-packages     # cppcheck
+pio run -t clean                          # vide .pio/build
 pio device list
 ```
 
@@ -340,17 +340,18 @@ Les logins sont dans le fichier `include/secrets.h`. Ne pas le commiter !
 ```bash
 pio test -e native      # 1. les tests logiques passent
 pio run -e esp32-s3     # 2. le firmware compile bien
-pio run -e esp32-s3-ci    # le build "sans capteurs" compile toujours
-<TEST MANUEL>           # 3. test sur carte de bout-en-bout
-git push                # 4. la CI prend le relais (build + test sur carte)
+pio run -e esp32-s3-ci  # 3.le build "sans capteurs" compile toujours
+<TEST MANUEL>           # 4. test sur carte de bout-en-bout
+git push                # 5. la CI prend le relais (build + test sur carte)
 ```
 
-### Pour Ryad et Thomas
+### Environnement de dev sans capteurs
+
 Utilise l'env esp32-s3-ci qui ne prends pas en compte les capteurs.
 
 ```
-pio test -e native # pour les tests logique (fonctions, ...), se fait en local
-pio run -e esp32-s3-ci # build le firmware (en local)
-pio run -e esp32-s3-ci -t upload # build et flash la carte
-pio device monitor --baud 115200 # voir les logs
+pio test -e native      # pour les tests logique (fonctions, ...), se fait en local
+pio run -e esp32-s3-ci  # build le firmware (en local)
+pio run -e esp32-s3-ci -t upload  # build et flash la carte
+pio device monitor --baud 115200  # voir les logs
 ```
