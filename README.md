@@ -127,24 +127,34 @@ A noté que :
 
 ### Persistance des données
 
-Lorsque le bracelet n'est pas connecté à l'app, il stock les mesures sur sa mémoire. Dès qu'il est connecté, il exportes les données stoquée vers l'app. Une fois toute les données transmise, il se met en mode "live".
+Lorsque le bracelet n'est pas connecté à l'app, il stocke les mesures dans sa
+mémoire flash. Dès qu'une app se connecte, il lui envoie ce stock, puis il passe
+en mode « live ».
 
-Une seule règle rend tout le protocole robuste aux déconnexions : **Le bracelet ne purge son stock qu'après l'ACK**
+Ce mécanisme existe parce que le bracelet mesure en permanence, y compris quand
+aucun téléphone n'est à portée. À la reconnexion il a donc un retard à rattraper,
+et rien ne garantit que la liaison tiendra le temps de l'écouler. Le protocole est robuste aux coupures car le firmware ne purge son stock
+qu'après l'ACK de l'app.
 
-Toute coupure — perte de portée, erreur BLE, veille du téléphone — produit le même
-comportement : les mesures non acquittées restent en flash et repartent à la prochaine
-connexion. Une mesure live ratée n'est jamais perdue : elle devient du backlog et sera
-rattrapée par la synchro fiable.
+Deux régimes en découlent :
 
-- le **backlog** en flash (`Storage` + `RingIndex`, voir §6),
-- le **protocole de rattrapage** en BLE (`HISTORY` + `SYNC_CTRL`, START / ACK /
-  STOP, voir §7),
-- les index sauvés en NVS pour survivre au reboot et au deep sleep de la
-  couche 3.
+- **rattrapage** : le stock part par paquets, chacun acquitté par l'app avant
+  d'être purgé de la flash ;
+- **direct** : stock vide, chaque mesure part seule, sans ACK.
 
-C'est ici qu'apparaît l'invariante centrale : **rien n'est purgé avant l'ACK de
-l'app**. Toute la complexité du firmware (états de synchro, timeout, renvoi de
-paquet) sert uniquement à tenir cette promesse.
+Trois pièces les soutiennent :
+
+- le **backlog** en flash (`Storage` + `RingIndex`, voir « Le stockage
+  (`Storage`) »),
+- le **protocole de rattrapage** en BLE, sur les caractéristiques `HISTORY` et
+  `SYNC_CTRL` (START / ACK / STOP, voir « BLEManager »),
+- les index du backlog sauvés en NVS, pour survivre au reboot et au deep sleep
+  (voir « Bouton, LED, veille »).
+
+Toute coupure — perte de portée, erreur BLE, veille du téléphone — produit le
+même comportement : les mesures non acquittées restent en flash et repartent à la
+prochaine connexion. Une mesure live ratée n'est pas perdue non plus : elle
+retourne dans le backlog et sera reprise par le rattrapage.
 
 #### Diagramme de séquence
 
@@ -199,16 +209,29 @@ sequenceDiagram
 ```
 
 
-- **IDLE** : pas d'app appairée, ou elle n'a pas dit START.
-- **WAIT_ACK** : un paquet est parti, on attend l'ACK. Rien n'est purgé tant
-  qu'il n'arrive pas. Pas d'ACK après `SYNC_ACK_TIMEOUT` (5 s) → on renvoie le
-  même paquet (sans risque : rien n'a été purgé, l'app déduplique par `ts`).
-- **LIVE** : stock vide, les mesures partent au fil de l'eau sans ACK.
+La synchro tient dans trois états. La colonne de droite dit ce qui fait sortir
+de l'état ; tout le reste du temps, on y reste.
 
-Un paquet d'historique = `[type][count]` + les mesures. `type` vaut `0x01`
-(il reste des données) ou `0xFF` (stock vide → l'app peut passer en live).
-Taille adaptée au **MTU négocié** par le téléphone : s'il est resté à 23
-octets, un paquet plein serait tronqué en silence, donc on réduit `count`.
+| État | Ce qui s'y passe | On en sort quand |
+|------|------------------|------------------|
+| `IDLE` | Aucune app appairée, ou elle n'a pas encore envoyé `START`. Les mesures s'empilent en flash. | L'app envoie `START`. |
+| `WAIT_ACK` | Un paquet d'historique est parti, on attend son ACK. Sans ACK au bout de 5 s, on renvoie le même paquet — sans risque, puisque rien n'a été purgé et que l'app déduplique par `ts`. | L'ACK arrive (purge du paquet, envoi du suivant), l'app envoie `STOP`, ou le lien tombe. |
+| `LIVE` | Stock vide, les mesures partent au fil de l'eau, sans ACK. | Du backlog réapparaît (une notification ratée, par exemple) : on repasse en rattrapage. |
+
+Un paquet d'historique commence par un en-tête de 4 octets
+`[type][count][seqLo][seqHi]`, suivi de `count` mesures (leur format est décrit
+dans « Format de la donnée `Measurement` »). `type` vaut `0x11` s'il reste des
+données, ou `0xFF` quand le stock est vide, ce qui autorise l'app à passer en
+live.
+
+`seq` est le numéro du paquet : l'app le renvoie tel quel dans son ACK, et un ACK
+portant un autre numéro est ignoré. Sans ce contrôle, l'ACK tardif d'un paquet
+déjà renvoyé passerait pour celui du paquet courant et purgerait des mesures que
+l'app n'a jamais reçues.
+
+La taille du paquet s'adapte au **MTU négocié** par le téléphone : s'il est resté
+aux 23 octets minimum du BLE, un paquet plein serait tronqué en silence, donc on
+réduit `count`.
 
 ### Le stockage (`Storage`)
 
