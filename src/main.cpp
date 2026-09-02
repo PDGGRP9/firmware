@@ -141,7 +141,7 @@ void setup() {
   }
 
   Serial.println("\n=====================================");
-  Serial.println("   BRACECO INIT - v1.1               ");
+  Serial.println("   BRACECO INIT                     ");
   Serial.println("=====================================");
   Serial.print("Device ID: ");
   Serial.println(DEV_ID);
