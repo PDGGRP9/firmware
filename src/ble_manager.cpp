@@ -176,6 +176,7 @@ bool BLEManager::initialize(Storage* storage, TimeSource* time) {
 
   pService->start();
 
+
   Serial.println("[OK] BLE Manager initialized");
   return true;
 }
