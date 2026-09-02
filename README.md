@@ -99,10 +99,31 @@ confirmées sont toujours en flash (voir « Persistance des données »).
 
 ### L'heure (`TimeSource`)
 
-Le bracelet n'a pas de RTC : au boot il ne sait pas quelle heure il est. L'app
-écrit l'epoch UTC sur `TIME` à chaque connexion ; entre deux synchros on
-extrapole avec `millis()`. Tant que rien n'est reçu, `now()` renvoie 0 et les
-mesures partent horodatées 0 — c'est l'app qui leur assignera une heure.
+L'horodatage des mesures est tenu par le `TimeSource`.
+
+Le bracelet n'a pas de RTC : au boot il ne sait pas quelle heure il est. Or il
+mesure avant même qu'un téléphone se connecte, et ces mesures doivent ressortir
+datées. L'app donne donc l'heure sur la caractéristique `TIME` à chaque
+connexion ; entre deux connexions le firmware la fait avancer tout seul.
+
+Le champ `ts` d'une mesure porte de ce fait deux choses selon le moment :
+
+- **avant la première synchro** : l'uptime du bracelet, en secondes,
+- **après** : un epoch UTC.
+
+Un seuil sépare les deux — un uptime reste petit, un epoch est forcément grand.
+L'app Android applique la même règle, elle sait donc toujours ce qu'elle lit.
+
+Quand l'heure arrive, le bracelet peut redater après coup les mesures déjà en
+stock : il sait à quel uptime la synchro a eu lieu, il remonte de la différence.
+La conversion se fait au moment de l'envoi, le stock reste tel quel.
+
+A noté que :
+
+  - La conversion se fait sur le paquet sortant, pas en flash : réécrire l'anneau
+    l'userait pour rien, et un renvoi après timeout refait le même calcul.
+  - Une mesure d'un boot précédent (reboot avec du backlog en attente) ne peut pas
+    être convertie. C'est un cas qui n'est pas encore gérer dans la version actuelle du firmware.
 
 ### Persistance des données
 
