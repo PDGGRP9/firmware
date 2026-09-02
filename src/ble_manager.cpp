@@ -174,6 +174,9 @@ bool BLEManager::initialize(Storage* storage, TimeSource* time) {
   pCharSyncCtrl->setCallbacks(pCtrl);
   pCharTime->setCallbacks(pCtrl);
 
+  pService->start();
+
+
   Serial.println("[OK] BLE Manager initialized");
   return true;
 }
