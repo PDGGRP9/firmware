@@ -66,39 +66,36 @@ Les deux capteurs partagent le même bus I2C :
 - **Sans capteur branché**, des valeurs simulées prennent le relais :
   HR = 75, SpO2 = 98, et +10 pas à chaque cycle.
 
-**Limites connues**
-
-- `accelResolution` n'est jamais initialisé alors que la détection de pas divise
-  l'accélération brute par lui : le comptage de pas n'est pas fiable tant que ce
-  n'est pas corrigé.
-- `getAccelMagnitude()` renvoie toujours 0, la valeur n'est jamais calculée.
-- La détection de pas utilise des variables `static` locales qui masquent les
-  membres de même nom (`stepInProgress`, `avgPeakAmplitude`…) : les membres sont
-  morts. À nettoyer.
-- Constantes déclarées et jamais utilisées : `PEAK_WINDOW_MS`,
-  `MIN_PEAKS_FOR_STEP`, `MIN_PEAKS_FOR_RAPID`, `DEBOUNCE_WINDOW_MS`,
-  `ADAPTIVE_THRESHOLD_FACTOR`, et le membre `isMoving`.
-
 ### BLEManager
 
-1. **La carte est visible.** `NimBLEDevice::init()` + `startAdvertising()`
-2. **La connexion tient.** On branche `MyServerCallbacks`
-4. **L'appairage.** `setSecurityAuth()`
-5. **Chiffrement** : Tout est chiffré (`READ_ENC` / `WRITE_ENC`) : sans appairage, l'app ne lit ni
-n'écrit rien. Appairage par passkey statique (`BLE_STATIC_PASSKEY`), affiché
-sur le moniteur série.
-6. **L'écriture dans l'autre sens.** La caractéristique `TIME` : l'app écrit
-   l'epoch UTC, le bracelet le reçoit. Premier trajet téléphone → bracelet,
-   et première occasion de rencontrer le piège des callbacks (voir §7 et voir chap. time).
+Toute la communication avec le téléphone passe par le BLEManager.
 
-Un service, quatre caractéristiques (UUIDs dans `config.h`) :
+Le bracelet expose un service GATT et quatre caractéristiques, une par type de
+message. L'app écrit dans deux d'entre elles ; le bracelet pousse ses mesures
+dans les deux autres par notification, sans attendre d'être interrogé.
 
-| Caractéristique | Sens      | Rôle                                        |
-|-----------------|-----------|---------------------------------------------|
-| `DATA`          | notify    | mesure live (8 octets)                      |
-| `HISTORY`       | notify    | paquet de mesures du backlog                |
-| `SYNC_CTRL`     | write     | 1 octet : START / ACK / STOP                |
-| `TIME`          | write     | epoch UTC uint32 LE, donné par l'app        |
+| Caractéristique | Qui écrit | Contenu                                          |
+|-----------------|-----------|--------------------------------------------------|
+| `DATA`          | bracelet  | une mesure en direct                             |
+| `HISTORY`       | bracelet  | un paquet de mesures stockées (jusqu'à 20)       |
+| `SYNC_CTRL`     | app       | `START`, `ACK` (paquet reçu) ou `STOP`           |
+| `TIME`          | app       | l'heure courante (voir « L'heure »)              |
+
+**Le déroulé d'une connexion :**
+
+1. Au boot, le bracelet s'annonce sous le nom `BRASCO-00` — et recommence à
+   s'annoncer dès qu'une connexion se termine.
+2. Le téléphone se connecte, puis doit s'appairer : un code à 6 chiffres
+   s'affiche sur le moniteur série. Tant qu'il n'est pas saisi, l'échange est
+   refusé — tout est chiffré, rien ne sort en clair.
+3. L'app écrit l'heure, puis `START` pour réclamer l'historique.
+4. **Rattrapage.** Le bracelet envoie un paquet et attend l'`ACK` de l'app avant
+   d'envoyer le suivant. Sans réponse au bout de 5 s, il renvoie le même paquet.
+5. **Direct.** Quand il n'a plus rien en stock, le bracelet le signale et bascule
+   en direct : les mesures partent une par une, sans confirmation.
+
+Une déconnexion ramène simplement à l'étape 1, sans rien perdre : les mesures non
+confirmées sont toujours en flash (voir « Persistance des données »).
 
 ### L'heure (`TimeSource`)
 
