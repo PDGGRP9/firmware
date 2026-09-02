@@ -1,13 +1,29 @@
 # Firmware
 
-## Fonctionnement général du bracelet
+## Fonctionnement général du firmware
 
-Bracelet sans écran, sur XIAO ESP32-S3. Toutes les 4s il :
+Le firmware est charghé sur ESP32-S3. Il mesure le rythme cardiaque, la SpO2
+et les pas, et envoie le tout au téléphone en Bluetooth. Rien ne s'affiche sur
+le bracelet : toute la visualisation est côté app.
 
-1. lit les capteurs (BPM + SpO2 sur le MAX30102 et les pas sur le MPU6050)
-2. fabrique une mesure de 8 octets
-3. l'envoie en BLE au téléphone ou, si le téléphone n'est pas là, la
-   sauvegarde pour l'envoyer à la prochaine connextion avec le téléphone.
+Au démarrage, le firmware initialise dans l'ordre : I2C, les deux capteurs, le
+stockage flash, puis le Bluetooth.
+
+Ensuite le firmware tourne dans une boucle qui, à intervalle régulier :
+
+1. lit les capteurs ;
+2. en fabrique une mesure compacte (heure, BPM, SpO2, pas) ;
+3. l'envoie au téléphone s'il est connecté, sinon l'écrit en flash.
+
+Quand le téléphone revient, il demande l'historique : le bracelet rejoue les
+mesures stockées, paquet par paquet, et n'efface un paquet qu'une fois que
+l'app a confirmé l'avoir reçu.
+
+A noté que :
+
+- **le bracelet n'a pas d'horloge**. L'horloge est synchornisée par l'app à chaque connexion.
+- **un appui long sur le bouton l'endort**. Avant de dormir, il vide ce qui
+  reste en RAM vers la flash, sinon ces mesures seraient perdues.
 
 ## Vue d'ensemble de la codebase
 
@@ -22,31 +38,46 @@ main.cpp            orchestration : setup(), loop()
 
 ### Captation des données
 
-Le fichier : `src/sensors.cpp` (`SensorManager`). Il ne fait que lire le
-matériel et exposer trois valeurs — `lastHeartRate`, `lastSpO2`,
-`stepCounter`.
+`src/sensors.cpp` lit les deux capteurs et garde en mémoire trois valeurs :
+fréquence cardiaque, SpO2, et cumul de pas.
 
 Le chemin :
 
 ```
-setup()   initI2C(SDA=5, SCL=6) → initMAX30102() → initMPU6050()
-loop()    toutes les 4 s : updateReadings()
-            ├─ MAX30102 : getHeartbeatSPO2() → sanitizeReading() → hr, spo2
-            └─ MPU6050  : getAcceleration()  → detectSteps()     → steps
+setup()  bus I2C → oxymètre → accéléromètre
+loop()   toutes les 4 s :
+           oxymètre       → HR + SpO2 nettoyés
+           accéléromètre  → détection de pas → compteur
 ```
 
-- **I2C partagé.** Les deux capteurs sont sur le même bus (SDA D4/GPIO5,
-  SCL D5/GPIO6), à des adresses différentes : `0x57` pour le MAX30102,
-  `0x68` pour le MPU6050. `Wire.begin()` n'est appelé qu'une fois.
-- **Nettoyage à la source.** Le driver du MAX30102 renvoie `-1` quand il n'a
-  rien de valable (pas de doigt, signal bruité). Rangé dans un `uint8_t`, ce
-  `-1` devient 255 — une valeur que le protocole n'a jamais prévue.
-  `sanitizeReading()` (dans `logic/`, donc testé sur PC) ramène tout ce qui est
-  ≤ 0 ou aberrant à "0 = pas de lecture".
-- **Les pas.** `detectSteps()` calcule la norme du vecteur accélération
-  et compte un pas au franchissement du seuil
-- **Le mode simulé.** Sans le flag `HAS_OXYGEN`, `updateReadings()` renvoie
-  HR = 75 / SpO2 = 98 ; sans `HAS_IMU`, +10 pas à chaque tour.
+Les deux capteurs partagent le même bus I2C :
+
+| capteur  | modèle   | adresse | mesure      |
+|----------|----------|---------|-------------|
+| oxymètre | MAX30102 | `0x57`  | BPM + SpO2  |
+| IMU      | MPU6050  | `0x68`  | pas         |
+
+- **Un capteur muet ne bloque pas le boot.** Si une init échoue, la LED interne clignote
+  le code d'erreur (`ERR_I2C` 0x4, `ERR_MAX30102` 0x5, `ERR_MPU6050` 0x6) et
+  cette étape seule est retentée en boucle jusqu'à ce qu'elle passe.
+- **Nettoyage à la source.** Une lecture d'oxymètre invalide ou aberrante est
+  ramenée à 0 avant tout le reste.
+- **Les pas.** TODO dès que PR du nouveau algo !
+- **Sans capteur branché**, des valeurs simulées prennent le relais :
+  HR = 75, SpO2 = 98, et +10 pas à chaque cycle.
+
+**Limites connues**
+
+- `accelResolution` n'est jamais initialisé alors que la détection de pas divise
+  l'accélération brute par lui : le comptage de pas n'est pas fiable tant que ce
+  n'est pas corrigé.
+- `getAccelMagnitude()` renvoie toujours 0, la valeur n'est jamais calculée.
+- La détection de pas utilise des variables `static` locales qui masquent les
+  membres de même nom (`stepInProgress`, `avgPeakAmplitude`…) : les membres sont
+  morts. À nettoyer.
+- Constantes déclarées et jamais utilisées : `PEAK_WINDOW_MS`,
+  `MIN_PEAKS_FOR_STEP`, `MIN_PEAKS_FOR_RAPID`, `DEBOUNCE_WINDOW_MS`,
+  `ADAPTIVE_THRESHOLD_FACTOR`, et le membre `isMoving`.
 
 ### BLEManager
 
