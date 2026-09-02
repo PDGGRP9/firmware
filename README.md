@@ -207,8 +207,6 @@ sequenceDiagram
     A->>B: reconnecte → retour phase 1
     end
 ```
-
-
 La synchro tient dans trois états. La colonne de droite dit ce qui fait sortir
 de l'état ; tout le reste du temps, on y reste.
 
@@ -235,25 +233,29 @@ réduit `count`.
 
 ### Le stockage (`Storage`)
 
-Deux étages, pour ne pas user la flash :
+`Storage` garde en flash les mesures que l'app n'a pas encore acquittées auprès de l'application
 
-1. **Tampon RAM** de `RAM_BATCH` (32) mesures. On n'écrit pas en flash pour
-   une mesure toutes les 4 s.
-2. **Fichier de taille fixe** en LittleFS (`/data.bin`), utilisé comme
-   **tampon circulaire** : `RING_CAPACITY` = 25000 slots × 8 o = 200 Ko,
-   ≈ 27 h de mesures. On `seek()` au bon slot et on écrit 8 octets — jamais de
-   réécriture du fichier entier.
+Nous avons deux contraintes matérielles la flash s'use à chaque
+écriture et un reboot et un deep sleep efface la RAM.
 
-`RingIndex` fait l'arithmétique (quel slot écrire, quel slot lire) et **ne
-touche pas la flash** : c'est ce qui la rend testable sur PC. Elle garde
-`head_` (le plus ancien non acquitté) et `count_` ; le tail est déduit.
-Ring plein → on écrase le plus ancien et on incrémente `dropped_`.
+Chaque étage répond à une de ces contraintes :
 
-`head` et `count` sont sauvés en **NVS** (`Preferences`) : sans ça, un reboot
-ou un deep sleep perdrait tout le backlog.
+| Contrainte | Choix | Effet |
+|------------|-------|-------|
+| une écriture flash toutes les 4 s userait la puce | tampon RAM  | une écriture toutes les 2 min environ |
+| flash finie, hors-ligne de durée inconnue | fichier de taille fixe `/data.bin` en LittleFS, utilisé en anneau : `RING_CAPACITY` (25000) slots × 8 o = 200 Ko, ≈ 27 h | plein, l'anneau écrase le plus ancien ; jamais de « disque plein » |
+| reboot et deep sleep effacent la RAM | `head` et `count` sauvés en NVS | le backlog survit au redémarrage |
 
-Point clé : `readBatch()` lit **sans supprimer**. La purge se fait uniquement
-dans `confirm()`, appelé après l'ACK de l'app.
+À l'écriture, `append()` empile en RAM. La RAM descend en flash à quatre moments :
+tampon plein, avant un deep sleep, à la déconnexion BLE, et au début d'un
+`readBatch()` — sinon les mesures encore en RAM partiraient après des plus
+récentes déjà en flash. Une descente fait un `seek()` au slot voulu et écrit
+8 octets ; le fichier n'est jamais réécrit en entier.
+
+À la lecture, `readBatch()` lit **sans supprimer**. La purge se fait uniquement
+dans `confirm()`, appelé après l'ACK de l'app. `RingIndex` fait toute
+l'arithmétique des slots — quel slot écrire, quel slot lire — sans toucher la
+flash : c'est ce qui la rend testable sur PC.
 
 ### Format de la donnée `Measurement`
 
