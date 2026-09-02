@@ -154,38 +154,38 @@ float gx = lastAx / accelResolution;
 
     unsigned long now = millis();
 
-    // === Filtrage passe-bas avec coefficient adaptatif ===
-    // Coefficient plus élevé quand le mouvement est important pour suivre rapidement
+    // === Low-pass filtering with adaptive coefficient ===
+    // Higher coefficient when the movement is large, to track it quickly
     float dynamicAlpha = LOWPASS_ALPHA;
     if (abs(magnitude_g - 1.0f) > 0.5f) {
-        dynamicAlpha = 0.6f;  // Réponse plus rapide aux mouvements brusques
+        dynamicAlpha = 0.6f;  // Faster response to abrupt movements
     }
     
     filteredMagnitude = (dynamicAlpha * magnitude_g) + ((1.0f - dynamicAlpha) * filteredMagnitude);
     
-    // === Estimation de la gravité avec filtre plus lent ===
+    // === Gravity estimation with a slower filter ===
     gravityEstimate = (GRAVITY_ALPHA * filteredMagnitude) + ((1.0f - GRAVITY_ALPHA) * gravityEstimate);
 
-    // === Calcul de l'accélération dynamique ===
+    // === Dynamic acceleration computation ===
     float dynamicAccel = filteredMagnitude - gravityEstimate;
     
-    // === Détection de pas basée sur le croisement de seuil ===
-    // avec hystérésis et machine à états simple
+    // === Step detection based on threshold crossing ===
+    // with hysteresis and a simple state machine
     
     static bool stepInProgress = false;
     static float peakValue = 0.0f;
     static unsigned long cycleStartTime = 0;
     
-    // Seuil adaptatif basé sur l'amplitude moyenne des pics récents
+    // Adaptive threshold based on the average amplitude of recent peaks
     static float avgPeakAmplitude = STEP_THRESHOLD_HIGH_G;
     static int peakCount = 0;
     static float peakSum = 0.0f;
     
-    // === MACHINE À ÉTATS ===
+    // === STATE MACHINE ===
     if (!stepInProgress) {
-        // État : ATTENTE D'UN PIC
+        // State: WAITING FOR A PEAK
         if (dynamicAccel > STEP_THRESHOLD_HIGH_G) {
-            // Début d'un pic potentiel
+            // Start of a potential peak
             stepInProgress = true;
             peakValue = dynamicAccel;
             cycleStartTime = now;
@@ -195,37 +195,37 @@ float gx = lastAx / accelResolution;
             #endif
         }
     } else {
-        // État : PIC EN COURS
+        // State: PEAK IN PROGRESS
         if (dynamicAccel > peakValue) {
-            // Le pic continue de monter
+            // The peak keeps rising
             peakValue = dynamicAccel;
         }
         
-        // Vérifier si le pic est terminé (retour sous le seuil bas)
+        // Check whether the peak is over (back under the low threshold)
         if (dynamicAccel < STEP_THRESHOLD_LOW_G) {
-            // Pic terminé
+            // Peak over
             unsigned long cycleDuration = now - cycleStartTime;
             
-            // === VALIDATION DU PAS ===
-            // Critères de validation :
-            // 1. Durée minimale entre les pas (anti-rebond)
-            // 2. Amplitude du pic suffisante
-            // 3. Durée du cycle dans une plage raisonnable (0.3s à 2s)
+            // === STEP VALIDATION ===
+            // Validation criteria:
+            // 1. Minimum duration between steps (debouncing)
+            // 2. Sufficient peak amplitude
+            // 3. Cycle duration within a reasonable range (0.3s to 2s)
             
             bool isStepValid = false;
             
             if ((now - lastStepTime) >= MIN_STEP_INTERVAL_MS) {
                 if (cycleDuration >= 200 && cycleDuration <= 2000) {
-                    // Vérifier si l'amplitude est suffisante
+                    // Check whether the amplitude is sufficient
                     if (peakValue > STEP_THRESHOLD_HIGH_G) {
                         isStepValid = true;
                         
-                        // Mettre à jour la moyenne des pics
+                        // Update the peak average
                         if (peakCount < 10) {
                             peakCount++;
                             peakSum += peakValue;
                         } else {
-                            // Fenêtre glissante simple
+                            // Simple sliding window
                             peakSum = peakSum * 0.9f + peakValue * 0.1f;
                         }
                         avgPeakAmplitude = peakSum / peakCount;
@@ -234,7 +234,7 @@ float gx = lastAx / accelResolution;
             }
             
             if (isStepValid) {
-                // Incrémenter le compteur de pas
+                // Increment the step counter
                 stepCounter++;
                 lastStepTime = now;
                 
@@ -243,10 +243,10 @@ float gx = lastAx / accelResolution;
                               peakValue, cycleDuration, stepCounter);
                 #endif
                 
-                // === DÉTECTION D'ACTIVITÉ ===
-                // Si plusieurs pas rapprochés, c'est de la marche rapide ou course
+                // === ACTIVITY DETECTION ===
+                // Several close steps means fast walking or running
                 if (cycleDuration < 500) {
-                    // Marche rapide ou course
+                    // Fast walking or running
                     #ifdef DEBUG_STEPS
                     Serial.println("[STEP] 🏃 Activité intense détectée");
                     #endif
@@ -268,12 +268,12 @@ float gx = lastAx / accelResolution;
                 #endif
             }
             
-            // Réinitialiser la machine à états
+            // Reset the state machine
             stepInProgress = false;
             peakValue = 0.0f;
         }
         
-        // Timeout de sécurité pour éviter les blocages
+        // Safety timeout to avoid getting stuck
         if ((now - cycleStartTime) > 2500) {
             stepInProgress = false;
             peakValue = 0.0f;
