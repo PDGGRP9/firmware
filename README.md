@@ -275,23 +275,29 @@ Ceci entrainte la limite suivant : 0 ne distingue pas « capteur sans lecture »
 
 ### Bouton, LED, veille
 
-- **Bouton** (D9 / GPIO8, actif bas, `INPUT_PULLUP`) : appui long de 3 s →
-  `storage.flush()`, puis `sensorManager.prepareSleep()`, puis deep sleep.
-  Anti-rebond de 30 ms — un contact mécanique rebondit et comptait plusieurs
-  appuis.
-- **LED d'état** (D10) : clignote toutes les 500 ms en fonctionnement normal
-  (« signe de vie » — LED figée = carte coincée), 4 clignotements au passage
-  en veille.
-- **Réveil** : `ext0` sur GPIO8. `PowerManager` attend le relâchement du bouton
-  avant de dormir (sinon réveil immédiat) et ré-arme le pull-up **du domaine
-  RTC**, car les pull-ups normaux sont coupés en deep sleep.
+Le bouton est la seule commande du bracelet, la LED son seul retour visuel.
 
-Au boot, `setup()` initialise dans l'ordre : I2C → MAX30102 → MPU6050 →
-Storage → BLE → advertising. Si une étape échoue, `loop()` entre dans une
-boucle de récupération : la LED de la carte clignote `error_code` fois
-(`ERR_I2C` = 4, `ERR_MAX30102` = 5, … voir `config.h`) puis on retente
-l'initialisation qui a échoué toutes les 3 s. Le bouton reste actif même en
-erreur.
+Deux LED distinctes, à ne pas confondre :
+
+- **la LED intégrée à la carte** (`LED_BUILTIN`) sert aux codes d'erreur au démarrage ;
+- **la LED externe** (D7) sert à l'état courant : signe de vie, puis coucher.
+
+Broches et comportements — chaque signal se lit sur une seule broche :
+
+| Signal | Broche | Comportement |
+|---|---|---|
+| Bouton | D9 (GPIO8), actif bas, `INPUT_PULLUP` | appui long 3 s → veille ; anti-rebond 30 ms |
+| LED externe | D7 | alternance 500 ms en marche ; 4 clignotements de 150 ms au coucher |
+| LED de la carte | `LED_BUILTIN` | allumée si init OK ; sinon clignote le code d'erreur |
+| Réveil | D9 (GPIO8) | `ext0`, front bas |
+
+Séquence de l'appui long : 4 clignotements (accusé de réception, avant tout le reste)
+→ `storage.flush()` → `prepareSleep()` sur les capteurs → attente du relâchement →
+deep sleep.
+
+Init au boot : I2C → MAX30102 → MPU6050 → Storage → BLE → advertising. Sur échec, la LED
+de la carte clignote le code d'erreur (voir `config.h`) et l'étape est retentée toutes les
+3 s. Le bouton reste lu : un bracelet coincé en erreur s'endort quand même.
 
 
 ## Environnement de développement et commandes du terminal
