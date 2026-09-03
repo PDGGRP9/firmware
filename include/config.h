@@ -71,7 +71,16 @@
 #define JSON_BUFFER_SIZE 256
 
 // Timing constants
-#define READ_INTERVAL 4000UL  // ms
+#define READ_INTERVAL 4000UL  // ms — HR/SpO2 sampling + one BLE measurement
+
+// Step detection needs a steady, fast accelerometer feed (a footfall lasts
+// ~0.5 s): the IMU is polled on this timer, independently of READ_INTERVAL.
+#define ACCEL_SAMPLE_INTERVAL_MS 20UL   // 50 Hz
+// MPU6050 default full-scale range is +/-2 g -> 16384 LSB/g. Set explicitly:
+// the field was never initialised, so raw counts were divided by garbage.
+#define ACCEL_LSB_PER_G 16384.0f
+// No IMU wired (simulation): fake a ~1.7 steps/s walk, one bump per READ_INTERVAL.
+#define SIM_STEPS_PER_READ 7U
 
 // Backlog storage (see include/storage.h)
 #define STORAGE_FILE    "/data.bin"

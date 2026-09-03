@@ -91,14 +91,21 @@ class MyControlCallbacks : public NimBLECharacteristicCallbacks {
       }
       g_pBLEManager->onSyncCommand(c[0], seq);
     } else if (pChar->getUUID().equals(NimBLEUUID(TIME_UUID))) {
-      if (value.size() != 4) {
+      // 4 bytes = epoch only (legacy). 8 bytes = epoch + local UTC offset (int32 LE),
+      // needed to reset the daily step counter at *local* midnight.
+      if (value.size() != 4 && value.size() != 8) {
         Serial.println("[BLE] TIME with invalid size, ignored");
         return;
       }
       const uint8_t* b = (const uint8_t*)value.data();
       uint32_t epoch = (uint32_t)b[0] | ((uint32_t)b[1] << 8) |
                        ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
-      g_pBLEManager->onTimeWrite(epoch);
+      int32_t offset = 0;
+      if (value.size() == 8) {
+        offset = (int32_t)((uint32_t)b[4] | ((uint32_t)b[5] << 8) |
+                           ((uint32_t)b[6] << 16) | ((uint32_t)b[7] << 24));
+      }
+      g_pBLEManager->onTimeWrite(epoch, offset);
     }
   }
 };
@@ -111,7 +118,7 @@ BLEManager::BLEManager()
     storage_(nullptr), time_(nullptr),
     syncState(SYNC_IDLE), lastBatchCount(0), batchSeq(0),
     lastBatchSentMs(0), lastStateLogMs(0),
-    pendingCmd(0), pendingAckSeq(0), pendingEpoch(0), hasPendingTime(false),
+    pendingCmd(0), pendingAckSeq(0), pendingEpoch(0), pendingOffset(0), hasPendingTime(false),
     pendingFlush(false),
     connHandle(BLE_HS_CONN_HANDLE_NONE) {
   g_pBLEManager = this;
@@ -173,8 +180,6 @@ bool BLEManager::initialize(Storage* storage, TimeSource* time) {
   MyControlCallbacks* pCtrl = new MyControlCallbacks();
   pCharSyncCtrl->setCallbacks(pCtrl);
   pCharTime->setCallbacks(pCtrl);
-
-  pService->start();
 
 
   Serial.println("[OK] BLE Manager initialized");
@@ -303,8 +308,9 @@ void BLEManager::onSyncCommand(uint8_t cmd, uint16_t seq) {
   pendingAckSeq = seq;
 }
 
-void BLEManager::onTimeWrite(uint32_t epoch) {
+void BLEManager::onTimeWrite(uint32_t epoch, int32_t offsetSeconds) {
   pendingEpoch = epoch;
+  pendingOffset = offsetSeconds;
   hasPendingTime = true;
 }
 
@@ -316,10 +322,14 @@ void BLEManager::tick() {
   //    measurement would go out with ts = 0.
   if (hasPendingTime) {
     uint32_t epoch = pendingEpoch;
+    int32_t offset = pendingOffset;
     hasPendingTime = false;
-    time_->sync(epoch, now);
+    time_->sync(epoch, offset, now);
     Serial.print("[BLE] Time received from the app: epoch=");
-    Serial.println(epoch);
+    Serial.print(epoch);
+    Serial.print(" offset=");
+    Serial.print(offset);
+    Serial.println("s");
     logState("time-sync");
   }
 

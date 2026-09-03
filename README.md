@@ -30,9 +30,11 @@ Le chemin :
 
 ```
 setup()   initI2C(SDA=5, SCL=6) → initMAX30102() → initMPU6050()
-loop()    toutes les 4 s : updateReadings()
-            ├─ MAX30102 : getHeartbeatSPO2() → sanitizeReading() → hr, spo2
-            └─ MPU6050  : getAcceleration()  → detectSteps()     → steps
+loop()    à chaque tour        : sampleMotion()  (≈50 Hz, auto-limité)
+            └─ MPU6050 : getAcceleration() → StepDetector.update() → stepCounter
+          toutes les 4 s        : updateReadings()
+            └─ MAX30102 : getHeartbeatSPO2() → sanitizeReading() → hr, spo2
+          minuit local (offset donné par l'app) : stepCounter remis à 0
 ```
 
 - **I2C partagé.** Les deux capteurs sont sur le même bus (SDA D4/GPIO5,
@@ -43,10 +45,15 @@ loop()    toutes les 4 s : updateReadings()
   `-1` devient 255 — une valeur que le protocole n'a jamais prévue.
   `sanitizeReading()` (dans `logic/`, donc testé sur PC) ramène tout ce qui est
   ≤ 0 ou aberrant à "0 = pas de lecture".
-- **Les pas.** `detectSteps()` calcule la norme du vecteur accélération
-  et compte un pas au franchissement du seuil
+- **Les pas.** `sampleMotion()` échantillonne l'accéléromètre à ~50 Hz (une
+  foulée dure ~0,5 s : à 4 s d'intervalle on ne détectait rien) et passe la
+  norme du vecteur à `StepDetector` (`logic/`, testé sur PC) : filtre passe-bas,
+  estimation de gravité, machine à états 1-pic avec hystérésis et garde de
+  cadence. `stepCounter` est **le total du jour** : `main.cpp` le remet à 0 au
+  passage de minuit **local** (l'app envoie l'offset UTC avec l'heure). Rien en
+  aval ne recalcule ce total.
 - **Le mode simulé.** Sans le flag `HAS_OXYGEN`, `updateReadings()` renvoie
-  HR = 75 / SpO2 = 98 ; sans `HAS_IMU`, +10 pas à chaque tour.
+  HR = 75 / SpO2 = 98 ; sans `HAS_IMU`, `SIM_STEPS_PER_READ` pas à chaque tour.
 
 ### BLEManager
 
@@ -67,14 +74,17 @@ Un service, quatre caractéristiques (UUIDs dans `config.h`) :
 | `DATA`          | notify    | mesure live (8 octets)                      |
 | `HISTORY`       | notify    | paquet de mesures du backlog                |
 | `SYNC_CTRL`     | write     | 1 octet : START / ACK / STOP                |
-| `TIME`          | write     | epoch UTC uint32 LE, donné par l'app        |
+| `TIME`          | write     | epoch UTC uint32 LE (+ offset local int32 LE en option, 8 o), donné par l'app |
 
 ### L'heure (`TimeSource`)
 
 Le bracelet n'a pas de RTC : au boot il ne sait pas quelle heure il est. L'app
-écrit l'epoch UTC sur `TIME` à chaque connexion ; entre deux synchros on
-extrapole avec `millis()`. Tant que rien n'est reçu, `now()` renvoie 0 et les
-mesures partent horodatées 0 — c'est l'app qui leur assignera une heure.
+écrit sur `TIME` à chaque connexion l'epoch UTC courant, suivi (payload 8 octets)
+de l'offset UTC local en secondes ; entre deux synchros on extrapole avec
+`millis()`. Tant que rien n'est reçu, `now()` renvoie l'uptime (pas 0, sinon
+toutes les mesures backlog partagent le même `ts`) et `resolve()` reconvertira
+en epoch réel à l'envoi. L'offset ne sert qu'à `localDayNumber()` pour la remise
+à 0 des pas à minuit local ; `now()`/`resolve()` restent en UTC.
 
 ### Persistance des données
 
@@ -192,7 +202,7 @@ Formaté en 8 octets, little-endian,
 | 0–3    | `ts`    | epoch UTC (s). 0 = l'app n'a pas donné l'heure |
 | 4      | `hr`    | BPM. 0 = pas de lecture                     |
 | 5      | `spo2`  | %. 0 = pas de lecture                       |
-| 6–7    | `steps` | cumul de pas, plafonné à 65535              |
+| 6–7    | `steps` | pas du jour (remis à 0 à minuit local), plafonné à 65535 |
 
 
 Convention : **0 = pas de lecture**. Le driver du MAX30102 renvoie `-1` quand

@@ -42,6 +42,7 @@ private:
     volatile uint8_t  pendingCmd;      // 0 = nothing pending
     volatile uint16_t pendingAckSeq;   // sequence carried by the last ACK received
     volatile uint32_t pendingEpoch;
+    volatile int32_t  pendingOffset;   // local UTC offset in seconds (0 if the app didn't send one)
     volatile bool     hasPendingTime;
     volatile bool     pendingFlush;
     uint16_t connHandle;   // to query the MTU negotiated with this phone
@@ -77,7 +78,10 @@ public:
     // Called from the NimBLE callbacks - they only memorize.
     // `seq` is only meaningful for SYNC_CMD_ACK; 0 for START and STOP.
     void onSyncCommand(uint8_t cmd, uint16_t seq);
-    void onTimeWrite(uint32_t epoch);
+    // `offsetSeconds` = local UTC offset the app sent alongside the epoch (0 when the app
+    // only wrote the legacy 4-byte payload). The bracelet needs it to reset the daily step
+    // counter at local midnight.
+    void onTimeWrite(uint32_t epoch, int32_t offsetSeconds);
 
     void handleConnect();
     void handleDisconnect();
