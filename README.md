@@ -1,8 +1,35 @@
-# Firmware
+# BRASCO - Firmware
+
+Firmware du bracelet connecté BRASCO, tournant sur ESP32-S3. Il mesure le rythme cardiaque, la SpO2 et les pas, puis transmet le tout à l'application mobile en Bluetooth. Rien ne s'affiche sur le bracelet : toute la visualisation est côté app.
+
+## Pour commencer
+
+- **[Documentation technique du firmware](./doc.md)** — le fonctionnement détaillé : architecture du code, protocole BLE, stockage, gestion de l'heure, etc.
+- **[Guide de contribution spécifique du firmware](./CONTRIBUTING.md)** — comment mettre en place l'environnement de dev, les conventions et le workflow de push.
+- **[Guide de contribution général de l'organisation](https://github.com/VOTRE-ORGA/.github/blob/main/CONTRIBUTING.md)** — les règles communes à tous les repos.
+
+
+# Documentation technique du firmware
+
+Cette page décrit le fonctionnement interne du firmware : comment il est structuré, comment les données circulent des capteurs jusqu'à l'app, et les choix de conception derrière chaque brique (stockage, protocole BLE, gestion de l'heure, veille).
+ 
+Elle s'adresse à quiconque veut comprendre ou modifier le code. Pour installer l'environnement de dev et les commandes du terminal, voir plutôt [CONTRIBUTING.md](./CONTRIBUTING.md).
+ 
+## Table des matières
+ 
+- [Fonctionnement général du firmware](#fonctionnement-général-du-firmware)
+- [Vue d'ensemble de la codebase](#vue-densemble-de-la-codebase)
+- [Captation des données](#captation-des-données)
+- [BLEManager](#blemanager)
+- [L'heure](#lheure-timesource)
+- [Persistance des données](#persistance-des-données)
+- [Le stockage](#le-stockage-storage)
+- [Format de la donnée](#format-de-la-donnée-measurement)
+- [Bouton, LED et mise en veille](#bouton-led-veille)
 
 ## Fonctionnement général du firmware
 
-Le firmware est charghé sur ESP32-S3. Il mesure le rythme cardiaque, la SpO2
+Le firmware est chargé sur ESP32-S3. Il mesure le rythme cardiaque, la SpO2
 et les pas, et envoie le tout au téléphone en Bluetooth. Rien ne s'affiche sur
 le bracelet : toute la visualisation est côté app.
 
