@@ -12,7 +12,6 @@ Elle s'adresse à quiconque veut comprendre ou modifier le code. Pour installer 
   - [BLEManager](#blemanager)
   - [L'heure](#lheure-timesource)
   - [Persistance des données](#persistance-des-données)
-    - [Diagramme de séquence](#diagramme-de-séquence)
   - [Le stockage](#le-stockage-storage)
   - [Format de la donnée](#format-de-la-donnée-measurement)
   - [Bouton, LED, veille](#bouton-led-veille)
