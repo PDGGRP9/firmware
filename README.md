@@ -38,17 +38,8 @@ main.cpp            orchestration : setup(), loop()
 
 ### Captation des données
 
-`src/sensors.cpp` lit les deux capteurs et garde en mémoire trois valeurs :
+`src/sensors.cpp` lit les deux capteurs (oxymètre et accéléromètre)  et garde en mémoire trois valeurs :
 fréquence cardiaque, SpO2, et cumul de pas.
-
-Le chemin :
-
-```
-setup()  bus I2C → oxymètre → accéléromètre
-loop()   toutes les 4 s :
-           oxymètre       → HR + SpO2 nettoyés
-           accéléromètre  → détection de pas → compteur
-```
 
 Les deux capteurs partagent le même bus I2C :
 
@@ -259,19 +250,28 @@ flash : c'est ce qui la rend testable sur PC.
 
 ### Format de la donnée `Measurement`
 
-Formaté en 8 octets, little-endian, 
+Une mesure fait 8 octets. Ce format est partagé pour le
+rattrapage d'historique et le direct. C'est aussi ce format qui est stoqué en flash.
+
+Le format est le suivant : encodage explicite octet
+par octet en little-endian, et taille écrite en dur plutôt que déduite d'un
+`sizeof()` — le compilateur peut ajouter du bourrage, ce qui décalerait tout le
+fichier anneau.
 
 | octets | champ   | sens                                        |
 |--------|---------|---------------------------------------------|
-| 0–3    | `ts`    | epoch UTC (s). 0 = l'app n'a pas donné l'heure |
+| 0–3    | `ts`    | epoch UTC (s), ou uptime du bracelet avant la première synchro — voir « L'heure (`TimeSource`) » |
 | 4      | `hr`    | BPM. 0 = pas de lecture                     |
 | 5      | `spo2`  | %. 0 = pas de lecture                       |
 | 6–7    | `steps` | cumul de pas, plafonné à 65535              |
 
+Convention pour `hr` et `spo2` : **0 = pas de lecture**. Le driver du MAX30102
+renvoie `-1` quand il n'a rien de valable (pas de doigt, trop de bruit) ;
+`sanitizeReading()` ramène à 0 tout ce qui est négatif ou aberrant (au-dessus de
+250 BPM ou 100 %). Sans ce filtre, `-1` rangé dans un `uint8_t` devient 255,
+valeur que le protocole n'a jamais prévue et que le backend refuse.
 
-Convention : **0 = pas de lecture**. Le driver du MAX30102 renvoie `-1` quand
-il n'a rien de valable ; `sanitizeReading()` ramène ça à 0 (sinon `-1` dans un
-`uint8_t` devient 255, valeur que le backend refuse). (TODO : idée d'ammélioration, est-ce qu'on pourrait changer le 0 pour différencier une "erreur" et une "personne morte"?)
+Ceci entrainte la limite suivant : 0 ne distingue pas « capteur sans lecture » de « porteur sans pouls ». Le protocole n'a pas de code d'erreur séparé.
 
 ### Bouton, LED, veille
 
