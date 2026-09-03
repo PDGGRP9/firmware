@@ -19,12 +19,6 @@ Quand le téléphone revient, il demande l'historique : le bracelet rejoue les
 mesures stockées, paquet par paquet, et n'efface un paquet qu'une fois que
 l'app a confirmé l'avoir reçu.
 
-A noté que :
-
-- **le bracelet n'a pas d'horloge**. L'horloge est synchornisée par l'app à chaque connexion.
-- **un appui long sur le bouton l'endort**. Avant de dormir, il vide ce qui
-  reste en RAM vers la flash, sinon ces mesures seraient perdues.
-
 ## Vue d'ensemble de la codebase
 
 ```
@@ -48,9 +42,7 @@ Les deux capteurs partagent le même bus I2C :
 | oxymètre | MAX30102 | `0x57`  | BPM + SpO2  |
 | IMU      | MPU6050  | `0x68`  | pas         |
 
-- **Un capteur muet ne bloque pas le boot.** Si une init échoue, la LED interne clignote
-  le code d'erreur (`ERR_I2C` 0x4, `ERR_MAX30102` 0x5, `ERR_MPU6050` 0x6) et
-  cette étape seule est retentée en boucle jusqu'à ce qu'elle passe.
+- **Un capteur muet ne bloque pas le boot.** Si une init échoue, l'erreur est indiquée depuis la led et cette étape seule est retentée en boucle jusqu'à ce qu'elle passe.
 - **Nettoyage à la source.** Une lecture d'oxymètre invalide ou aberrante est
   ramenée à 0 avant tout le reste.
 - **Les pas.** TODO dès que PR du nouveau algo !
