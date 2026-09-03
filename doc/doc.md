@@ -41,7 +41,7 @@ main.cpp            orchestration : setup(), loop()
   ├─ storage.*      Storage        : backlog en flash (LittleFS + NVS)
   ├─ ble_manager.*  BLEManager     : serveur BLE + protocole de synchro
   ├─ power_management.*  PowerManager : deep sleep + réveil bouton
-  └─ logic/         code PORTABLE, testé sur PC (structure, arithmérique, horlogie      logicielle)
+  └─ logic/         code PORTABLE, testé sur PC (structure, arithmétique, horlogerie logicielle)
 ```
 
 ### Captation des données
@@ -56,8 +56,9 @@ Les deux capteurs partagent le même bus I2C :
 | oxymètre | MAX30102 | `0x57`  | BPM + SpO2  |
 | IMU      | MPU6050  | `0x68`  | pas         |
 
-- **Un capteur muet ne bloque pas le boot.** Si une init échoue, l'erreur est indiquée depuis la led et cette étape seule est retentée en boucle jusqu'à ce qu'elle passe.
-- **Les pas.** TODO dès que PR du nouveau algo !
+- **Un capteur muet ne bloque pas le boot.** Si une init échoue, l'erreur est indiquée depuis la LED de l'ESP32 et cette étape seule est retentée en boucle jusqu'à ce qu'elle passe.
+- **Les pas.** L'accéléromètre est lu régulièrement (~50 Hz) et un pas est compté quand un pic d'accélération correspond à un mouvement plausible
+  (amplitude, durée, écart avec le pas précédent), ce qui évite de confondre un pas avec un simple mouvement de bras.
 - **Sans capteur branché**, des valeurs simulées prennent le relais :
   HR = 75, SpO2 = 98, et +10 pas à chaque cycle.
 
