@@ -20,12 +20,12 @@
 struct StepDetectorConfig {
     float lowPassAlpha   = 0.30f;   // per-sample smoothing of the raw magnitude
     float gravityAlpha   = 0.02f;   // how fast the gravity baseline follows
-    float enterThreshG   = 0.12f;   // dynamic accel to start a peak
-    float exitThreshG    = 0.05f;   // ...and to end it (hysteresis)
-    float minPeakG       = 0.15f;   // reject peaks smaller than this (noise / tremor)
-    uint32_t minStepMs   = 260;     // faster than ~3.8 steps/s is not walking
-    uint32_t minPeakMs   = 40;      // a real footfall lasts at least this long
-    uint32_t maxPeakMs   = 600;     // longer = a shock or the arm being moved, not a step
+    float enterThreshG   = 0.30f;   // dynamic accel to start a peak
+    float exitThreshG    = 0.12f;   // ...and to end it (hysteresis)
+    float minPeakG       = 0.45f;   // reject peaks smaller than this (noise / tremor)
+    uint32_t minStepMs   = 350;     // faster than ~3.4 steps/s is not walking
+    uint32_t minPeakMs   = 80;      // a real footfall lasts at least this long
+    uint32_t maxPeakMs   = 350;     // longer = a shock or the arm being moved, not a step
 };
 
 class StepDetector {
