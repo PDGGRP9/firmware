@@ -15,6 +15,7 @@
 #ifdef HAS_IMU
 #include "I2Cdev.h"
 #include "MPU6050.h"
+#include "logic/step_detector.h"
 #endif // HAS_IMU
 
 // Reads the I2C sensors (MAX30102 for HR/SpO2, MPU6050 for steps) and keeps
@@ -36,44 +37,12 @@ private:
 #ifdef HAS_IMU
     MPU6050* pMPU6050;
     int16_t lastAx, lastAy, lastAz;
-    float accelResolution;
-    float accelMagnitude;
-    bool isMoving;
+    float accelMagnitude;          // |accel| in g of the last sample (~1.0 at rest)
 
-    // --- Variables for the step detection algorithm ---
-    float filteredMagnitude = 1.0f;
-    float gravityEstimate = 1.0f;
-    unsigned long lastStepTime = 0;
-
-    // === Detection by multiple peaks + timeout ===
-    int peakCountInWindow = 0;      // Number of peaks in the time window
-    unsigned long windowStartTime = 0;  // Start of the observation window
-
-    // --- Calibration constants (TO TUNE) ---
-    static constexpr float STEP_THRESHOLD_HIGH_G = 0.25f;
-    static constexpr float STEP_THRESHOLD_LOW_G  = 0.10f;
-    static constexpr unsigned long MIN_STEP_INTERVAL_MS = 300;
-    static constexpr float LOWPASS_ALPHA = 0.4f; 
-    static constexpr float GRAVITY_ALPHA = 0.025f; 
-
-    // === New: sliding observation window ===
-    static constexpr unsigned long PEAK_WINDOW_MS = 700;
-    static constexpr int MIN_PEAKS_FOR_STEP = 2;
-    static constexpr int MIN_PEAKS_FOR_RAPID = 3;
-
-    // === Debouncing ===
-    static constexpr unsigned long DEBOUNCE_WINDOW_MS = 100; 
-
-        // === New variables for the improved detection ===
-    static constexpr unsigned long MIN_CYCLE_DURATION_MS = 200;   // Minimum duration of a step cycle
-    static constexpr unsigned long MAX_CYCLE_DURATION_MS = 2000;  // Maximum duration of a step cycle
-    static constexpr float ADAPTIVE_THRESHOLD_FACTOR = 0.7f;      // Factor for the adaptive threshold
-    
-    // Variables for cycle tracking
-    float avgPeakAmplitude;
-    bool stepInProgress;
-    float currentPeakValue;
-    unsigned long currentCycleStart;
+    // Step counting is delegated to a pure, unit-tested detector fed at ~50 Hz
+    // by sampleMotion() (see step_detector.h). No detection state lives here.
+    StepDetector stepDetector_;
+    uint32_t lastAccelSampleMs_ = 0;
 #endif // HAS_IMU
 
 public:
@@ -88,8 +57,13 @@ public:
     // Put the sensors in a safe state before deep sleep
     void prepareSleep();
 
-    // Refresh the cached readings
+    // Refresh HR/SpO2 (and, without an IMU, the simulated step count).
+    // Call once per READ_INTERVAL.
     void updateReadings();
+
+    // Poll the accelerometer and run the step detector. Call on every loop():
+    // it rate-limits itself to ACCEL_SAMPLE_INTERVAL_MS internally.
+    void sampleMotion();
 
     // Getters
     uint8_t getHeartRate() const { return lastHeartRate; }
@@ -98,7 +72,6 @@ public:
 
 #ifdef HAS_IMU
     float getAccelMagnitude() const { return accelMagnitude; }
-    void detectSteps();
 #endif // HAS_IMU
 
     void resetSteps() { stepCounter = 0; }

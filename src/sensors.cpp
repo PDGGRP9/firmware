@@ -14,8 +14,7 @@ SensorManager::SensorManager()
 #endif
 #ifdef HAS_IMU
       , pMPU6050(nullptr),
-      lastAx(0), lastAy(0), lastAz(0), accelMagnitude(0.0f),
-      isMoving(false)
+      lastAx(0), lastAy(0), lastAz(0), accelMagnitude(0.0f)
 #endif
 {
 }
@@ -129,158 +128,34 @@ void SensorManager::updateReadings() {
     lastSpO2 = 98;
 #endif
 
-#ifdef HAS_IMU
-    if (pMPU6050) {
-        int16_t ax, ay, az;
-        pMPU6050->getAcceleration(&ax, &ay, &az);
-        lastAx = ax;
-        lastAy = ay;
-        lastAz = az;
-        detectSteps();
-    }
-#else
-    stepCounter += 10;
+#ifndef HAS_IMU
+    // No accelerometer wired: fake a steady walk so the app/BLE path can be
+    // exercised without hardware. sampleMotion() is compiled out in this case.
+    stepCounter += SIM_STEPS_PER_READ;
 #endif
 }
 
-// ==================== STEP DETECTION ====================
+// ==================== MOTION SAMPLING / STEP DETECTION ====================
+void SensorManager::sampleMotion() {
 #ifdef HAS_IMU
-void SensorManager::detectSteps() {
-float gx = lastAx / accelResolution;
-    float gy = lastAy / accelResolution;
-    float gz = lastAz / accelResolution;
+    if (!pMPU6050) return;
 
-    float magnitude_g = sqrt(gx*gx + gy*gy + gz*gz);
+    const uint32_t now = millis();
+    if (now - lastAccelSampleMs_ < ACCEL_SAMPLE_INTERVAL_MS) return;
+    lastAccelSampleMs_ = now;
 
-    unsigned long now = millis();
+    int16_t ax, ay, az;
+    pMPU6050->getAcceleration(&ax, &ay, &az);
+    lastAx = ax;
+    lastAy = ay;
+    lastAz = az;
 
-    // === Low-pass filtering with adaptive coefficient ===
-    // Higher coefficient when the movement is large, to track it quickly
-    float dynamicAlpha = LOWPASS_ALPHA;
-    if (abs(magnitude_g - 1.0f) > 0.5f) {
-        dynamicAlpha = 0.6f;  // Faster response to abrupt movements
-    }
-    
-    filteredMagnitude = (dynamicAlpha * magnitude_g) + ((1.0f - dynamicAlpha) * filteredMagnitude);
-    
-    // === Gravity estimation with a slower filter ===
-    gravityEstimate = (GRAVITY_ALPHA * filteredMagnitude) + ((1.0f - GRAVITY_ALPHA) * gravityEstimate);
+    const float gx = ax / ACCEL_LSB_PER_G;
+    const float gy = ay / ACCEL_LSB_PER_G;
+    const float gz = az / ACCEL_LSB_PER_G;
+    accelMagnitude = sqrtf(gx * gx + gy * gy + gz * gz);
 
-    // === Dynamic acceleration computation ===
-    float dynamicAccel = filteredMagnitude - gravityEstimate;
-    
-    // === Step detection based on threshold crossing ===
-    // with hysteresis and a simple state machine
-    
-    static bool stepInProgress = false;
-    static float peakValue = 0.0f;
-    static unsigned long cycleStartTime = 0;
-    
-    // Adaptive threshold based on the average amplitude of recent peaks
-    static float avgPeakAmplitude = STEP_THRESHOLD_HIGH_G;
-    static int peakCount = 0;
-    static float peakSum = 0.0f;
-    
-    // === STATE MACHINE ===
-    if (!stepInProgress) {
-        // State: WAITING FOR A PEAK
-        if (dynamicAccel > STEP_THRESHOLD_HIGH_G) {
-            // Start of a potential peak
-            stepInProgress = true;
-            peakValue = dynamicAccel;
-            cycleStartTime = now;
-            
-            #ifdef DEBUG_STEPS
-            Serial.printf("[STEP] Pic détecté: %.3fg\n", dynamicAccel);
-            #endif
-        }
-    } else {
-        // State: PEAK IN PROGRESS
-        if (dynamicAccel > peakValue) {
-            // The peak keeps rising
-            peakValue = dynamicAccel;
-        }
-        
-        // Check whether the peak is over (back under the low threshold)
-        if (dynamicAccel < STEP_THRESHOLD_LOW_G) {
-            // Peak over
-            unsigned long cycleDuration = now - cycleStartTime;
-            
-            // === STEP VALIDATION ===
-            // Validation criteria:
-            // 1. Minimum duration between steps (debouncing)
-            // 2. Sufficient peak amplitude
-            // 3. Cycle duration within a reasonable range (0.3s to 2s)
-            
-            bool isStepValid = false;
-            
-            if ((now - lastStepTime) >= MIN_STEP_INTERVAL_MS) {
-                if (cycleDuration >= 200 && cycleDuration <= 2000) {
-                    // Check whether the amplitude is sufficient
-                    if (peakValue > STEP_THRESHOLD_HIGH_G) {
-                        isStepValid = true;
-                        
-                        // Update the peak average
-                        if (peakCount < 10) {
-                            peakCount++;
-                            peakSum += peakValue;
-                        } else {
-                            // Simple sliding window
-                            peakSum = peakSum * 0.9f + peakValue * 0.1f;
-                        }
-                        avgPeakAmplitude = peakSum / peakCount;
-                    }
-                }
-            }
-            
-            if (isStepValid) {
-                // Increment the step counter
-                stepCounter++;
-                lastStepTime = now;
-                
-                #ifdef DEBUG_STEPS
-                Serial.printf("[STEP] ✅ VALIDÉ | dynAccel=%.3fg | durée=%lums | total=%lu\n", 
-                              peakValue, cycleDuration, stepCounter);
-                #endif
-                
-                // === ACTIVITY DETECTION ===
-                // Several close steps means fast walking or running
-                if (cycleDuration < 500) {
-                    // Fast walking or running
-                    #ifdef DEBUG_STEPS
-                    Serial.println("[STEP] 🏃 Activité intense détectée");
-                    #endif
-                }
-            } else {
-                #ifdef DEBUG_STEPS
-                const char* reason = "inconnue";
-                if ((now - lastStepTime) < MIN_STEP_INTERVAL_MS) {
-                    reason = "intervalle trop court";
-                } else if (cycleDuration < 200) {
-                    reason = "cycle trop court";
-                } else if (cycleDuration > 2000) {
-                    reason = "cycle trop long";
-                } else if (peakValue <= STEP_THRESHOLD_HIGH_G) {
-                    reason = "amplitude insuffisante";
-                }
-                Serial.printf("[STEP] ❌ REJETÉ (%s) | dynAccel=%.3fg | durée=%lums\n", 
-                              reason, peakValue, cycleDuration);
-                #endif
-            }
-            
-            // Reset the state machine
-            stepInProgress = false;
-            peakValue = 0.0f;
-        }
-        
-        // Safety timeout to avoid getting stuck
-        if ((now - cycleStartTime) > 2500) {
-            stepInProgress = false;
-            peakValue = 0.0f;
-            #ifdef DEBUG_STEPS
-            Serial.println("[STEP] ⏱️ Timeout - cycle abandonné");
-            #endif
-        }
-    }
+    stepCounter += stepDetector_.update(accelMagnitude, now);
+#endif
 }
-#endif // HAS_IMU
+

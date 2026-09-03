@@ -19,6 +19,9 @@ TimeSource timeSource;
 bool init_success = true;
 uint8_t error_code = 0x1;
 unsigned long lastReadTime = 0;
+// Local calendar day of the last measurement, to reset the step counter at local
+// midnight. INT32_MIN = "not known yet" (set on the first synced reading, no reset).
+int32_t lastLocalDay = INT32_MIN;
 
 // ==================== STATUS LED (D7) ====================
 #ifdef HAS_STATUS_LED
@@ -297,9 +300,25 @@ void loop() {
   // Always called: the NimBLE callbacks only drop off the commands.
   bleManager.tick();
 
+  // === Step detection ===
+  // Sampled here, every loop(), not on the READ_INTERVAL timer: a footfall lasts
+  // ~0.5 s and the detector needs a steady ~50 Hz feed (it rate-limits itself).
+  sensorManager.sampleMotion();
+
   // === Read and send the data ===
   if (millis() - lastReadTime >= READ_INTERVAL) {
     lastReadTime = millis();
+
+    // The bracelet owns the daily step total: reset it at local midnight, using
+    // the UTC offset the app sent with the time. Nothing downstream re-derives it.
+    if (timeSource.isSynced()) {
+      int32_t localDay = timeSource.localDayNumber(millis());
+      if (lastLocalDay != INT32_MIN && localDay != lastLocalDay) {
+        sensorManager.resetSteps();
+        Serial.println("[Main] Local midnight -> step counter reset");
+      }
+      lastLocalDay = localDay;
+    }
 
     sensorManager.updateReadings();
 
