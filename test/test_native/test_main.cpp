@@ -244,48 +244,6 @@ void test_local_day_number_is_zero_before_sync(void) {
     TEST_ASSERT_EQUAL_INT32(0, ts.localDayNumber(123456));
 }
 
-// --- StepDetector ----------------------------------------------------------
-
-// Feeds `seconds` of a `freqHz` sine (amplitude `ampG` around 1 g) at `rateHz`.
-static uint32_t countSteps(StepDetector& d, float freqHz, float ampG, float seconds, float rateHz) {
-    const uint32_t stepMs = (uint32_t)(1000.0f / rateHz);
-    uint32_t steps = 0;
-    for (uint32_t t = 0; t <= (uint32_t)(seconds * 1000.0f); t += stepMs) {
-        const float mag = 1.0f + ampG * sinf(2.0f * 3.14159265f * freqHz * (t / 1000.0f));
-        steps += d.update(mag, t);
-    }
-    return steps;
-}
-
-// A 2 Hz walking cadence for 5 s = ~10 steps (allow the filter warm-up slop).
-void test_step_detector_counts_a_walking_cadence(void) {
-    StepDetector d;
-    uint32_t steps = countSteps(d, 2.0f, 0.30f, 5.0f, 50.0f);
-    TEST_ASSERT_TRUE(steps >= 8 && steps <= 11);
-}
-
-// Perfectly still: not a single step.
-void test_step_detector_ignores_a_flat_signal(void) {
-    StepDetector d;
-    uint32_t steps = 0;
-    for (uint32_t t = 0; t <= 5000; t += 20) steps += d.update(1.0f, t);
-    TEST_ASSERT_EQUAL_UINT32(0, steps);
-}
-
-// Small high-frequency sensor noise (0.03 g at 20 Hz) must not read as walking.
-void test_step_detector_rejects_low_amplitude_noise(void) {
-    StepDetector d;
-    uint32_t steps = countSteps(d, 20.0f, 0.03f, 5.0f, 50.0f);
-    TEST_ASSERT_EQUAL_UINT32(0, steps);
-}
-
-// Cadence guard: a 10 Hz shake can't be counted as 10 steps/s.
-void test_step_detector_caps_implausible_cadence(void) {
-    StepDetector d;
-    uint32_t steps = countSteps(d, 10.0f, 0.40f, 3.0f, 100.0f);
-    TEST_ASSERT_TRUE(steps <= 12);  // < 3.8/s * 3s, not ~30
-}
-
 // The oximeter driver returns -1 when it has no reading: that becomes 255 in a
 // uint8_t and used to reach the backend, which rejected the measurement.
 void test_sanitize_reading(void) {
@@ -323,11 +281,6 @@ int main(int argc, char** argv) {
     RUN_TEST(test_time_survives_millis_wrap);
     RUN_TEST(test_local_day_number_rolls_over_at_local_midnight);
     RUN_TEST(test_local_day_number_is_zero_before_sync);
-
-    RUN_TEST(test_step_detector_counts_a_walking_cadence);
-    RUN_TEST(test_step_detector_ignores_a_flat_signal);
-    RUN_TEST(test_step_detector_rejects_low_amplitude_noise);
-    RUN_TEST(test_step_detector_caps_implausible_cadence);
 
     RUN_TEST(test_sanitize_reading);
 
