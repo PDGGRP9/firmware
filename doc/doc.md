@@ -31,8 +31,7 @@ Ensuite le firmware tourne dans une boucle qui, à intervalle régulier :
 2. en fabrique une mesure compacte (heure, BPM, SpO2, pas) ;
 3. l'envoie au téléphone s'il est connecté, sinon l'écrit en flash.
 
-Quand le téléphone revient, il demande l'historique et le bracelet relance les
-mesures stockées.
+Quand le téléphone se reconnecte après une coupure, il demande l'historique et le bracelet lui retransmet automatiquement toutes les mesures accumulées pendant la déconnexion.
 
 ## Vue d'ensemble de la codebase
 
