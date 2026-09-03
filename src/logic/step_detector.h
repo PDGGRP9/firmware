@@ -33,11 +33,11 @@ public:
     StepDetector() {}
     explicit StepDetector(const StepDetectorConfig& config) : cfg_(config) {}
 
-    // Returns 1 if this sample confirmed a step, 0 otherwise.
+    // Feed one sample, returns 1 if it confirmed a step, 0 otherwise.
     uint8_t update(float accelMagnitudeG, uint32_t tMs);
 
-    // Forget the filter/peak state (e.g. sensor was just re-initialised). Does
-    // not touch any step total — SensorManager keeps that.
+    // Reset the filter/peak state (e.g. after sensor re-init). Does not touch
+    // the step total, that stays in SensorManager.
     void resetState();
 
 private:

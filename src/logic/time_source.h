@@ -5,7 +5,7 @@
 
 #include "measurement.h"
 
-// The bracelet has no clock: at boot it does not know what time it is. The app
+// The bracelet has no clock: at boot it does not know the time. The app
 // writes the UTC epoch on the TIME characteristic at every connection; between
 // two syncs we extrapolate with millis().
 //
@@ -13,14 +13,12 @@
 // can be tested on PC without waiting 49 days.
 class TimeSource {
 public:
-    // Called when the app writes TIME. `nowMs` = millis() at the same instant.
+    // Sync with an epoch only (legacy), no local offset.
     void sync(uint32_t epochSeconds, uint32_t nowMs) {
         sync(epochSeconds, 0, nowMs);
     }
 
-    // Same, plus the local UTC offset in seconds (DST included) the app now sends
-    // alongside the epoch. Used only by localDayNumber() for the daily step reset;
-    // now()/resolve() stay in UTC.
+    // Sync with epoch + local UTC offset (used only by localDayNumber()).
     void sync(uint32_t epochSeconds, int32_t offsetSeconds, uint32_t nowMs) {
         epochBase_ = epochSeconds;
         utcOffset_ = offsetSeconds;
@@ -28,10 +26,8 @@ public:
         synced_ = true;
     }
 
-    // Before the app gives the time we return the uptime in seconds, not 0:
-    // measurements all stamped 0 would share the same ts and the app's dedup by
-    // (deviceUid, ts) would keep only one. The uptime is also what resolve()
-    // needs later to recover their real time. TS_EPOCH_MIN tells them apart.
+    // Current time: uptime in seconds before first sync (so measurements stay
+    // distinguishable), real epoch after.
     uint32_t now(uint32_t nowMs) const {
         if (!synced_) return nowMs / 1000u;
         // uint32_t subtraction: still correct once millis() has wrapped.
@@ -39,13 +35,11 @@ public:
         return epochBase_ + elapsedMs / 1000u;
     }
 
-    // Gives back its real epoch to a measurement taken before the sync: it
-    // carries its uptime, and we now know the uptime at the sync point, so we
-    // walk back from there. A ts that is already an epoch comes out unchanged.
+    // Convert a pre-sync uptime timestamp back into a real epoch.
+    // A ts that is already an epoch comes out unchanged.
     //
-    // Known limitation, not handled: an uptime later than the sync point can
-    // only come from a previous boot (reboot with a non-empty backlog) and its
-    // base is gone. We leave it as is - the app will stamp it on reception.
+    // Known limitation: an uptime later than the sync point (leftover from a
+    // previous boot) cannot be resolved and is returned as is.
     uint32_t resolve(uint32_t ts) const {
         if (!synced_ || ts >= TS_EPOCH_MIN) return ts;
         uint32_t syncUptime = msBase_ / 1000u;
@@ -53,11 +47,11 @@ public:
         return epochBase_ - (syncUptime - ts);
     }
 
+    // Whether the app has already provided the time.
     bool isSynced() const { return synced_; }
 
-    // Which local calendar day we're in, as a day count since the epoch. main.cpp
-    // compares this between measurements and resets the step counter when it changes
-    // (local midnight). Meaningless before the first sync (returns 0).
+    // Local calendar day number (epoch day + UTC offset), used by main.cpp to
+    // detect local midnight and reset the step counter. Returns 0 before sync.
     int32_t localDayNumber(uint32_t nowMs) const {
         if (!synced_) return 0;
         int64_t localSeconds = (int64_t)now(nowMs) + utcOffset_;
