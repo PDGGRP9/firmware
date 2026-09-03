@@ -5,16 +5,15 @@
 
 #include "config.h"
 
+// Mount the filesystem and allocate the ring file if needed.
 bool Storage::begin() {
-    // true = format when the mount fails (first use, or corrupted partition).
-    // Without it the bracelet would be stuck with no storage at all.
+    // Format on mount failure (first use or corrupted partition).
     if (!LittleFS.begin(true)) {
         Serial.println("[FAIL] Storage - LittleFS mount failed");
         return false;
     }
 
-    // The ring file has a fixed size: it is fully allocated on the first boot
-    // so we never hit a "disk full" in the middle of a measurement.
+    // Ring file has a fixed size, fully allocated on first boot.
     const size_t wantedSize = (size_t)RING_CAPACITY * MEASUREMENT_SIZE;
     File f = LittleFS.open(STORAGE_FILE, LittleFS.exists(STORAGE_FILE) ? "r+" : "w+");
     if (!f) {
@@ -53,6 +52,7 @@ bool Storage::begin() {
     return true;
 }
 
+// Add a measurement to the RAM buffer, flush when the batch is full.
 bool Storage::append(const Measurement& m) {
     if (!ready_) return false;
 
@@ -63,6 +63,7 @@ bool Storage::append(const Measurement& m) {
     return true;
 }
 
+// Write the RAM buffer to flash.
 bool Storage::flush() {
     if (!ready_ || ramCount_ == 0) return true;
 
@@ -98,11 +99,11 @@ bool Storage::flush() {
     return written > 0;
 }
 
+// Read up to max measurements from flash, in order.
 uint8_t Storage::readBatch(Measurement* out, uint8_t max) {
     if (!ready_) return 0;
 
-    // We always serve from flash: the RAM buffer is flushed there first so the
-    // measurements keep their acquisition order.
+    // Flush RAM first to keep acquisition order.
     if (ramCount_ > 0) flush();
 
     uint32_t available = ring_.count();
@@ -128,6 +129,7 @@ uint8_t Storage::readBatch(Measurement* out, uint8_t max) {
     return read;
 }
 
+// Drop n measurements from the ring after they were ACKed.
 void Storage::confirm(uint8_t n) {
     if (!ready_ || n == 0) return;
     ring_.release(n);
@@ -138,6 +140,7 @@ void Storage::confirm(uint8_t n) {
     Serial.println(ring_.count());
 }
 
+// Persist ring head/count to survive reboots.
 void Storage::saveIndex() {
     prefs_.putUInt("head", ring_.head());
     prefs_.putUInt("count", ring_.count());

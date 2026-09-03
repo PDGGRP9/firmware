@@ -1,5 +1,6 @@
 #include "logic/step_detector.h"
 
+// Clear all filter/peak state back to defaults.
 void StepDetector::resetState() {
     primed_ = false;
     lowPass_ = 1.0f;
@@ -10,6 +11,7 @@ void StepDetector::resetState() {
     lastStepMs_ = 0;
 }
 
+// Feed one accelerometer-magnitude sample and detect steps.
 uint8_t StepDetector::update(float accelMagnitudeG, uint32_t tMs) {
     // First sample: seed the filters on it instead of on the 1.0 default, so the
     // baseline does not spend the first second converging (and firing bogus steps).
@@ -20,6 +22,7 @@ uint8_t StepDetector::update(float accelMagnitudeG, uint32_t tMs) {
         return 0;
     }
 
+    // Smooth the signal and track the slow gravity baseline.
     lowPass_ += cfg_.lowPassAlpha * (accelMagnitudeG - lowPass_);
     gravity_ += cfg_.gravityAlpha * (lowPass_ - gravity_);
     const float dynamic = lowPass_ - gravity_;
@@ -27,6 +30,7 @@ uint8_t StepDetector::update(float accelMagnitudeG, uint32_t tMs) {
     uint8_t steps = 0;
 
     if (!inPeak_) {
+        // Not currently in a peak: check if this sample starts one.
         if (dynamic > cfg_.enterThreshG) {
             inPeak_ = true;
             peakValue_ = dynamic;
@@ -39,6 +43,7 @@ uint8_t StepDetector::update(float accelMagnitudeG, uint32_t tMs) {
     if (dynamic > peakValue_) peakValue_ = dynamic;
 
     if (dynamic < cfg_.exitThreshG) {
+        // Peak just ended: validate it as a real step (amplitude, width, cadence).
         const uint32_t peakMs = tMs - peakStartMs_;
         const uint32_t sinceLastStep = tMs - lastStepMs_;
         const bool amplitudeOk = peakValue_ >= cfg_.minPeakG;

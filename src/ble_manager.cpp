@@ -8,12 +8,10 @@ static BLEManager* g_pBLEManager = nullptr;
 // ==================== SERVER CALLBACKS ====================
 class MyServerCallbacks : public NimBLEServerCallbacks {
 
+  // Called when the physical link comes up, possibly already encrypted (reconnect of a known peer).
   void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
-    // Already-paired phone: NimBLE re-encrypts the link on its own from the
-    // stored key (LTK), without replaying a pairing. So onAuthenticationComplete
-    // is never called and, without this check, the bracelet would stay at conn=0
-    // forever and ignore the START (log of 2026-08-31: the phone ends up
-    // dropping the link with HCI reason 531).
+    // A re-encrypted link from stored keys skips onAuthenticationComplete,
+    // so we must detect that case here or the bracelet never sees the client as connected.
     if (connInfo.isEncrypted()) {
       Serial.println("[BLE] Link encrypted right away (peer already paired)");
       if (g_pBLEManager) {
@@ -24,6 +22,7 @@ class MyServerCallbacks : public NimBLEServerCallbacks {
     Serial.println("[BLE] Physical link up (waiting for authentication)");
   }
 
+  // Called on disconnection, any reason.
   void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo, int reason) override {
     Serial.print("[BLE] Disconnected, reason: ");
     Serial.println(reason);
@@ -32,6 +31,7 @@ class MyServerCallbacks : public NimBLEServerCallbacks {
     }
   }
 
+  // Called by NimBLE to get the passkey to show for pairing.
   uint32_t onPassKeyDisplay() override {
     uint32_t passkey = g_pBLEManager ? g_pBLEManager->getPassKey() : BLE_STATIC_PASSKEY;
     Serial.println("\n==============================");
@@ -41,6 +41,7 @@ class MyServerCallbacks : public NimBLEServerCallbacks {
     return passkey;
   }
 
+  // Called once pairing/authentication finishes (success or failure).
   void onAuthenticationComplete(NimBLEConnInfo& connInfo) override {
     bool success = connInfo.isEncrypted();
     if (g_pBLEManager) {
@@ -50,27 +51,22 @@ class MyServerCallbacks : public NimBLEServerCallbacks {
 };
 
 // ==================== CHARACTERISTIC CALLBACKS ====================
-// Careful: this runs on the BLE host task. Handling the command would write to
-// flash (LittleFS + NVS), way too slow for that task. So we only memorize, and
-// BLEManager::tick() does the work from loop().
+// Runs on the BLE host task: only memorize the command here, tick() does the
+// real (slower) work from loop().
 class MyControlCallbacks : public NimBLECharacteristicCallbacks {
 
+  // Called when the app writes to SYNC_CTRL or TIME characteristics.
   void onWrite(NimBLECharacteristic* pChar, NimBLEConnInfo& connInfo) override {
     if (!g_pBLEManager) return;
     std::string value = pChar->getValue();
 
-    // Getting a write on a WRITE_ENC characteristic proves the link is
-    // encrypted: the BLE stack would have refused it otherwise. It can happen
-    // BEFORE NimBLE tells us authentication is done (that is what happened with
-    // the TIME received at conn=0). So we treat the client as connected right
-    // now, else the command that follows would be handled for nothing.
+    // A successful encrypted write proves the link is ready, even if
+    // NimBLE hasn't confirmed authentication yet.
     if (!g_pBLEManager->isConnected() && connInfo.isEncrypted()) {
       g_pBLEManager->handleAuthComplete(true, connInfo.getConnHandle());
     }
 
-    // Always trace: writes are rare (time + sync commands), and this is the
-    // only way to know whether the app really reaches the bracelet when the
-    // sync does not start.
+    // Trace every write: rare events (time + sync commands), useful to debug.
     Serial.print("[BLE] Write received on ...");
     Serial.print(pChar->getUUID().toString().substr(4, 4).c_str());
     Serial.print(" (");
@@ -78,8 +74,7 @@ class MyControlCallbacks : public NimBLECharacteristicCallbacks {
     Serial.println(" bytes)");
 
     if (pChar->getUUID().equals(NimBLEUUID(SYNC_CTRL_UUID))) {
-      // START and STOP are 1 byte; the ACK is 3 and carries the number of the
-      // packet it acknowledges: [0x02][seqLo][seqHi].
+      // START/STOP = 1 byte. ACK = 3 bytes: [0x02][seqLo][seqHi].
       if (value.size() != 1 && value.size() != 3) {
         Serial.println("[BLE] SYNC command with invalid size, ignored");
         return;
@@ -91,8 +86,7 @@ class MyControlCallbacks : public NimBLECharacteristicCallbacks {
       }
       g_pBLEManager->onSyncCommand(c[0], seq);
     } else if (pChar->getUUID().equals(NimBLEUUID(TIME_UUID))) {
-      // 4 bytes = epoch only (legacy). 8 bytes = epoch + local UTC offset (int32 LE),
-      // needed to reset the daily step counter at *local* midnight.
+      // 4 bytes = epoch only (legacy). 8 bytes = epoch + UTC offset (for local midnight).
       if (value.size() != 4 && value.size() != 8) {
         Serial.println("[BLE] TIME with invalid size, ignored");
         return;
@@ -129,6 +123,7 @@ BLEManager::~BLEManager() {
 }
 
 // ==================== INIT ====================
+// Create the BLE server, service and characteristics, configure security.
 bool BLEManager::initialize(Storage* storage, TimeSource* time) {
   Serial.println("\n--- BLE Manager init ---");
 
@@ -153,15 +148,13 @@ bool BLEManager::initialize(Storage* storage, TimeSource* time) {
   uint8_t initialPayload[4] = {0, 0, 0, 0};
   pCharData->setValue(initialPayload, sizeof(initialPayload));
 
-  // The three characteristics of the backlog catch-up. Everything is
-  // encrypted: without pairing the app reads nothing and writes nothing.
+  // Backlog catch-up characteristics, all encrypted.
   pCharHistory = pService->createCharacteristic(
       HISTORY_UUID,
       NIMBLE_PROPERTY::READ_ENC | NIMBLE_PROPERTY::NOTIFY);
 
-  // WRITE_ENC is a PERMISSION (0x1000), not the WRITE property (0x0008):
-  // without both, the characteristic is not declared writable and Android
-  // refuses the write without even reporting an error.
+  // WRITE_ENC is a permission, not the WRITE property: both are needed or
+  // Android silently refuses the write.
   pCharSyncCtrl = pService->createCharacteristic(
       SYNC_CTRL_UUID,
       NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_ENC);
@@ -170,8 +163,6 @@ bool BLEManager::initialize(Storage* storage, TimeSource* time) {
       TIME_UUID,
       NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_ENC);
 
-  // pCharData is already dereferenced just above: only the three new ones are
-  // checked here.
   if (!pCharHistory || !pCharSyncCtrl || !pCharTime) {
     Serial.println("[FAIL] BLE - characteristic creation");
     return false;
@@ -181,13 +172,13 @@ bool BLEManager::initialize(Storage* storage, TimeSource* time) {
   pCharSyncCtrl->setCallbacks(pCtrl);
   pCharTime->setCallbacks(pCtrl);
 
-
   Serial.println("[OK] BLE Manager initialized");
   return true;
 }
 
 // ==================== ADVERTISING ====================
 
+// Start advertising the service UUID + device name.
 bool BLEManager::startAdvertising() {
   if (advertisingActive) {
     return true;
@@ -195,13 +186,13 @@ bool BLEManager::startAdvertising() {
 
   NimBLEAdvertising* pAdvertising = NimBLEDevice::getAdvertising();
 
-  // Main packet: just the flags + the service UUID
+  // Main packet: flags + service UUID
   NimBLEAdvertisementData advData;
   advData.setFlags(0x06); // LE General Discoverable + BR/EDR Not Supported
   advData.setCompleteServices(NimBLEUUID(SERVICE_UUID));
   pAdvertising->setAdvertisementData(advData);
 
-  // Scan response: the device name (separate packet, another 31 bytes)
+  // Scan response: device name (separate packet)
   NimBLEAdvertisementData scanData;
   scanData.setName(BLE_DEVICE_NAME);
   pAdvertising->setScanResponseData(scanData);
@@ -217,11 +208,11 @@ bool BLEManager::startAdvertising() {
 }
 
 // ==================== BINARY SEND ====================
+// Notify a single live measurement in the legacy 4-byte format.
 void BLEManager::sendSensorData(uint8_t hr, uint8_t spo2, uint32_t steps) {
   if (!deviceConnected || !pCharData) return;
 
-  // Binary payload: [BPM(1)][SpO2(1)][Steps_LSB(1)][Steps_MSB(1)]
-  // Steps clamped to uint16_t (0-65535) to fit in 2 bytes, little-endian
+  // Payload: [BPM(1)][SpO2(1)][Steps_LSB(1)][Steps_MSB(1)], steps clamped to uint16_t
   uint16_t steps16 = (steps > 65535) ? 65535 : (uint16_t)steps;
 
   uint8_t payload[4];
@@ -241,10 +232,9 @@ void BLEManager::sendSensorData(uint8_t hr, uint8_t spo2, uint32_t steps) {
 }
 
 // ==================== INTERNAL CALLBACKS ====================
+// Mark the client as connected, guarding against a duplicate call.
 void BLEManager::handleConnect() {
-  // We can come here twice for the same connection (link already encrypted,
-  // then authentication done). Without this early return, the second pass would
-  // reset syncState to IDLE while a drain may already be running.
+  // Can be called twice for the same connection (encrypted then authenticated).
   if (deviceConnected) return;
   deviceConnected = true;
   syncState = SYNC_IDLE;  // waiting for the app's START
@@ -252,28 +242,28 @@ void BLEManager::handleConnect() {
   logState("connected");
 }
 
+// Reset connection state and restart advertising after a disconnect.
 void BLEManager::handleDisconnect() {
   deviceConnected = false;
   advertisingActive = false;
   syncState = SYNC_IDLE;
-  // Without this, getPeerMTU() would query a dead handle on reconnection and
-  // return 0 -> packets sized on an imaginary MTU (see sendNextBatch).
+  // Avoids querying a dead handle for MTU on reconnection.
   connHandle = BLE_HS_CONN_HANDLE_NONE;
-  // Nothing is dropped: the un-ACKed packet is sent again on reconnection.
+  // Nothing is dropped: the un-ACKed packet will be resent on reconnection.
   if (lastBatchCount > 0) {
     Serial.print("[SYNC] Link lost with ");
     Serial.print(lastBatchCount);
     Serial.println(" un-ACKed measurements -> they will be sent again");
     lastBatchCount = 0;
   }
-  // The RAM buffer must go to flash, but not here: we are on the BLE host
-  // task. tick() takes care of it on the next loop().
+  // Flush deferred to tick() since we're on the BLE host task here.
   pendingFlush = true;
   Serial.println("[BLE] Client disconnected");
   logState("disconnected");
   startAdvertising();
 }
 
+// Confirm or reject the pending authentication.
 void BLEManager::handleAuthComplete(bool success, uint16_t handle) {
   if (success) {
     connHandle = handle;
@@ -287,11 +277,13 @@ void BLEManager::handleAuthComplete(bool success, uint16_t handle) {
   }
 }
 
+// Return the fixed pairing passkey.
 uint32_t BLEManager::getPassKey() const {
   return BLE_STATIC_PASSKEY;
 }
 
 // ==================== STOP ADVERTISING ====================
+// Stop advertising (e.g. once a client is connected).
 bool BLEManager::stopAdvertising() {
   if (!advertisingActive) return true;
   bool ok = NimBLEDevice::getAdvertising()->stop();
@@ -303,11 +295,13 @@ bool BLEManager::stopAdvertising() {
 }
 
 // ==================== COMMANDS RECEIVED (only memorized) ====================
+// Store the sync command for processing in tick().
 void BLEManager::onSyncCommand(uint8_t cmd, uint16_t seq) {
   pendingCmd = cmd;
   pendingAckSeq = seq;
 }
 
+// Store the time write for processing in tick().
 void BLEManager::onTimeWrite(uint32_t epoch, int32_t offsetSeconds) {
   pendingEpoch = epoch;
   pendingOffset = offsetSeconds;
@@ -315,11 +309,11 @@ void BLEManager::onTimeWrite(uint32_t epoch, int32_t offsetSeconds) {
 }
 
 // ==================== SYNC PROTOCOL (driven from loop) ====================
+// Main state machine: apply pending time/commands, resend on timeout, drain backlog.
 void BLEManager::tick() {
   uint32_t now = millis();
 
-  // 1. The app gave us the time: the bracelet has no clock, without it every
-  //    measurement would go out with ts = 0.
+  // 1. Apply the time sent by the app (bracelet has no clock).
   if (hasPendingTime) {
     uint32_t epoch = pendingEpoch;
     int32_t offset = pendingOffset;
@@ -333,18 +327,16 @@ void BLEManager::tick() {
     logState("time-sync");
   }
 
-  // 2. RAM buffer flush asked for by the disconnection (see handleDisconnect).
+  // 2. RAM buffer flush requested by handleDisconnect.
   if (pendingFlush) {
     pendingFlush = false;
     storage_->flush();
   }
 
-  // 3. Pending sync command.
+  // 3. Process the pending sync command, if any.
   uint8_t cmd = pendingCmd;
   if (cmd != 0) {
-    // Link not ready yet: we KEEP the command instead of consuming it. Before,
-    // sendNextBatch() returned silently and the START vanished without leaving
-    // any trace in the logs.
+    // Keep the command if the link isn't ready yet, instead of dropping it silently.
     if (!deviceConnected) {
       Serial.println("[SYNC] Command received before the link was ready -> kept");
       return;
@@ -361,15 +353,12 @@ void BLEManager::tick() {
 
       case SYNC_CMD_ACK:
         if (syncState != SYNC_WAIT_ACK) {
-          // Typically the ACK of a packet already resent after a timeout:
-          // harmless, we ignore it.
+          // Likely the ACK of a packet already resent after a timeout: harmless.
           Serial.println("[SYNC] ACK received while not waiting, ignored");
           break;
         }
         if (pendingAckSeq != batchSeq) {
-          // ACK of an already-acked packet (duplicate, or arrived after a
-          // resend). Without this check it would pass for the current packet's
-          // ACK and drop measurements the app never received.
+          // Duplicate or late ACK: ignore, or we'd drop measurements the app never got.
           Serial.printf("[SYNC] ACK #%u while waiting for #%u -> ignored\n",
                         (unsigned)pendingAckSeq, (unsigned)batchSeq);
           break;
@@ -397,12 +386,9 @@ void BLEManager::tick() {
     }
   }
 
-  // 4. No ACK in time: we resend the same packet. Safe, nothing was dropped and
-  //    the app dedups by ts.
-  // millis() is read again here instead of the `now` from the top of tick():
-  // sendNextBatch() may have run just above (step 3) and set lastBatchSentMs
-  // AFTER `now`. The uint32_t subtraction would then underflow (~4.29 billion)
-  // and every packet would be resent right after being sent.
+  // 4. No ACK in time: resend the same packet (nothing was dropped, app dedups by ts).
+  // millis() read again here since sendNextBatch() above may have updated lastBatchSentMs
+  // after `now`, which would underflow the subtraction.
   if (syncState == SYNC_WAIT_ACK && (millis() - lastBatchSentMs) >= SYNC_ACK_TIMEOUT) {
     Serial.print("[SYNC] No ACK -> resending packet #");
     Serial.print(batchSeq);
@@ -411,8 +397,7 @@ void BLEManager::tick() {
     sendNextBatch();
   }
 
-  // 5. We are LIVE but backlog piled up (a missed notify for instance): back to
-  //    draining, as the README state diagram says.
+  // 5. LIVE but backlog piled up again: resume draining.
   if (syncState == SYNC_LIVE && deviceConnected && storage_->pending() > 0) {
     Serial.print("[SYNC] ");
     Serial.print(storage_->pending());
@@ -420,25 +405,23 @@ void BLEManager::tick() {
     sendNextBatch();
   }
 
-  // 6. Heartbeat: even when nothing moves, we want to know where we stand.
+  // 6. Periodic heartbeat log.
   if ((now - lastStateLogMs) >= STATE_LOG_INTERVAL) {
     logState("heartbeat");
   }
 }
 
+// Build and send the next backlog packet, or switch to LIVE if storage is empty.
 void BLEManager::sendNextBatch() {
   if (!deviceConnected) {
     syncState = SYNC_IDLE;
     return;
   }
 
-  // The MTU is negotiated by the phone: if it did not ask for more than the
-  // default 23 bytes, a full packet would be silently truncated. So we size the
-  // packet to what really fits.
+  // Size the packet to the negotiated MTU, or it would be silently truncated.
   uint8_t maxBatch = HISTORY_BATCH;
   uint16_t mtu = pServer->getPeerMTU(connHandle);
-  // Unknown MTU (0): fall back to the BLE minimum, 23 bytes. Falling back to
-  // the best case would silently truncate the packet.
+  // Unknown MTU (0): fall back to the BLE minimum (23 bytes).
   if (mtu < 23) mtu = 23;
   {
     uint16_t fits = (mtu - 3 - HISTORY_HEADER_SIZE) / MEASUREMENT_SIZE;
@@ -456,10 +439,8 @@ void BLEManager::sendNextBatch() {
   Measurement batch[HISTORY_BATCH];
   uint8_t n = storage_->readBatch(batch, maxBatch);
 
-  // Measurements taken before the sync carry their uptime: now that we have the
-  // time, we give them their epoch back. Only in the outgoing packet - flash
-  // keeps the uptime, rewriting the ring would wear it for nothing, and a resend
-  // after a timeout redoes the exact same computation.
+  // Restore the real epoch on old measurements taken before time sync.
+  // Only in the outgoing packet: flash keeps the uptime value.
   if (time_) {
     for (uint8_t i = 0; i < n; ++i) {
       batch[i].ts = time_->resolve(batch[i].ts);
@@ -480,9 +461,7 @@ void BLEManager::sendNextBatch() {
     return;
   }
 
-  // Incremented BEFORE building: this is the number that goes in the header and
-  // that the app must echo. The timeout resend does batchSeq-- just before
-  // calling here, so a resent packet keeps its number.
+  // Incremented before building: this is the number the app must ACK.
   batchSeq++;
 
   uint8_t packet[HISTORY_HEADER_SIZE + HISTORY_BATCH * MEASUREMENT_SIZE];
@@ -505,6 +484,7 @@ void BLEManager::sendNextBatch() {
 }
 
 // ==================== LIVE SEND (same 8-byte record) ====================
+// Notify a single measurement in LIVE mode.
 bool BLEManager::sendLive(const Measurement& m) {
   if (!deviceConnected || syncState != SYNC_LIVE || !pCharData) return false;
 
@@ -515,9 +495,7 @@ bool BLEManager::sendLive(const Measurement& m) {
 }
 
 // ==================== THE LINE THAT SAYS IT ALL ====================
-// Printed on every state transition and every STATE_LOG_INTERVAL ms. This is the
-// one to paste in a ticket: who is connected, who waits for what, and how many
-// measurements are still stored.
+// Log the full sync state: connection, sync mode, batch, storage counts, time.
 void BLEManager::logState(const char* reason) {
   lastStateLogMs = millis();
 
