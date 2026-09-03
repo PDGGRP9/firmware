@@ -2,7 +2,7 @@
 
 Cette page décrit le fonctionnement interne du firmware : comment il est structuré, comment les données circulent des capteurs jusqu'à l'app, et les choix de conception derrière chaque brique (stockage, protocole BLE, gestion de l'heure, veille).
  
-Elle s'adresse à quiconque veut comprendre ou modifier le code. Pour installer l'environnement de dev et les commandes du terminal, voir plutôt [CONTRIBUTING.md](./CONTRIBUTING.md).
+Elle s'adresse à quiconque veut comprendre ou modifier le code. Pour installer l'environnement de dev et les commandes du terminal, voir [CONTRIBUTING.md](./CONTRIBUTING.md).
  
 ## Table des matières
 
@@ -32,9 +32,8 @@ Ensuite le firmware tourne dans une boucle qui, à intervalle régulier :
 2. en fabrique une mesure compacte (heure, BPM, SpO2, pas) ;
 3. l'envoie au téléphone s'il est connecté, sinon l'écrit en flash.
 
-Quand le téléphone revient, il demande l'historique : le bracelet rejoue les
-mesures stockées, paquet par paquet, et n'efface un paquet qu'une fois que
-l'app a confirmé l'avoir reçu.
+Quand le téléphone revient, il demande l'historique et le bracelet relance les
+mesures stockées.
 
 ## Vue d'ensemble de la codebase
 
@@ -60,8 +59,6 @@ Les deux capteurs partagent le même bus I2C :
 | IMU      | MPU6050  | `0x68`  | pas         |
 
 - **Un capteur muet ne bloque pas le boot.** Si une init échoue, l'erreur est indiquée depuis la led et cette étape seule est retentée en boucle jusqu'à ce qu'elle passe.
-- **Nettoyage à la source.** Une lecture d'oxymètre invalide ou aberrante est
-  ramenée à 0 avant tout le reste.
 - **Les pas.** TODO dès que PR du nouveau algo !
 - **Sans capteur branché**, des valeurs simulées prennent le relais :
   HR = 75, SpO2 = 98, et +10 pas à chaque cycle.
@@ -288,7 +285,7 @@ Le bouton est la seule commande du bracelet, la LED son seul retour visuel.
 
 Deux LED distinctes, à ne pas confondre :
 
-- **la LED intégrée à la carte** (`LED_BUILTIN`) sert aux codes d'erreur au démarrage ;
+- **la LED intégrée à la carte** (`LED_BUILTIN`) sert aux codes d'erreur au démarrage
 - **la LED externe** (D7) sert à l'état courant : signe de vie, puis coucher.
 
 Broches et comportements — chaque signal se lit sur une seule broche :
