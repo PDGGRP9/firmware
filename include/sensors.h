@@ -2,6 +2,7 @@
 #define SENSORS_H
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <Wire.h>
 #include "config.h"
 
@@ -27,6 +28,15 @@ private:
     uint8_t  lastHeartRate;
     uint8_t  lastSpO2;
     uint32_t stepCounter;
+
+    // Daily step total persistence. stepCounter lives in RAM only, which deep
+    // sleep and any reset wipe: it is mirrored to NVS (own namespace) before
+    // sleep and every STEP_PERSIST_INTERVAL, tagged with the local day it
+    // belongs to so a bracelet powered off across midnight starts the new day
+    // from 0. Not in the constructor init list -> no -Wreorder constraint.
+    Preferences stepPrefs_;
+    uint32_t lastPersistedSteps_ = 0;
+    int32_t  lastPersistedDay_ = INT32_MIN;
 
     // Declared AFTER the three above so the constructor init list stays in
     // declaration order whatever the flag combination is (else -Wreorder).
@@ -75,6 +85,18 @@ public:
 #endif // HAS_IMU
 
     void resetSteps() { stepCounter = 0; }
+
+    // Reload the daily step count saved in NVS into stepCounter. Returns the
+    // local day number it was saved on, or INT32_MIN if it was never saved (or
+    // saved before the first time sync). main.cpp seeds lastLocalDay with it so
+    // the midnight-reset check fires on the next synced reading when the saved
+    // day is in the past. Call once, at boot, after Serial is up.
+    int32_t restoreSteps();
+
+    // Save stepCounter and the given local day number to NVS. Called before
+    // deep sleep and periodically from loop(). No-op when nothing changed since
+    // the last call (and NVS itself skips identical writes).
+    void persistSteps(int32_t localDay);
 };
 
 #endif // SENSORS_H

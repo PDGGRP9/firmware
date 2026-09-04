@@ -19,6 +19,9 @@ TimeSource timeSource;
 bool init_success = true;
 uint8_t error_code = 0x1;
 unsigned long lastReadTime = 0;
+// Safety-net timer for the daily step total: deep sleep persists it explicitly,
+// this covers an unexpected power loss (see STEP_PERSIST_INTERVAL).
+unsigned long lastStepPersistMs = 0;
 // Local calendar day of the last measurement, to reset the step counter at local
 // midnight. INT32_MIN = "not known yet" (set on the first synced reading, no reset).
 int32_t lastLocalDay = INT32_MIN;
@@ -104,6 +107,8 @@ void checkButtonForSleep() {
         blinkSleepSignal();  // immediate visual feedback on the long press
         // The RAM buffer must reach flash: it is not kept across deep sleep.
         storage.flush();
+        // Same for the daily step total: RAM only, wiped by deep sleep.
+        sensorManager.persistSteps(lastLocalDay);
         delay(200);
 
         sensorManager.prepareSleep();
@@ -181,6 +186,12 @@ void setup() {
     init_success = false;
     error_code = ERR_STORAGE;
   }
+
+  // === Daily step total ===
+  // Restored from NVS: it must survive deep sleep and power loss. The saved day
+  // seeds lastLocalDay, so a bracelet powered off across local midnight resets
+  // the counter on its first synced reading in loop() (see the READ block).
+  lastLocalDay = sensorManager.restoreSteps();
 
   // === BLE ===
   if (!bleManager.initialize(&storage, &timeSource)) {
@@ -300,6 +311,15 @@ void loop() {
   // Always called: the NimBLE callbacks only drop off the commands.
   bleManager.tick();
 
+  // === Daily step total: periodic safety-net save ===
+  // The explicit save is on the deep-sleep path; this only limits how many
+  // steps an unexpected power loss can cost. persistSteps() is a no-op when
+  // the count has not moved.
+  if (millis() - lastStepPersistMs >= STEP_PERSIST_INTERVAL) {
+    lastStepPersistMs = millis();
+    sensorManager.persistSteps(lastLocalDay);
+  }
+
   // === Step detection ===
   // Sampled here, every loop(), not on the READ_INTERVAL timer: a footfall lasts
   // ~0.5 s and the detector needs a steady ~50 Hz feed (it rate-limits itself).
@@ -315,6 +335,9 @@ void loop() {
       int32_t localDay = timeSource.localDayNumber(millis());
       if (lastLocalDay != INT32_MIN && localDay != lastLocalDay) {
         sensorManager.resetSteps();
+        // Persist the reset right away, tagged with the new day: a power loss
+        // before the next periodic save must not bring yesterday's total back.
+        sensorManager.persistSteps(localDay);
         Serial.println("[Main] Local midnight -> step counter reset");
       }
       lastLocalDay = localDay;

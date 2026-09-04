@@ -88,6 +88,14 @@
 #define RAM_BATCH       32       // measurements kept in RAM before writing to flash
 #define PREFS_NAMESPACE "brasco"
 
+// Daily step total persistence (see sensors.h). Its own NVS namespace, separate
+// from the backlog indexes above.
+#define STEP_PREFS_NAMESPACE "steps"
+// The count is saved before every deep sleep; this timer is the safety net for
+// an unexpected power loss / crash, which then costs at most this many minutes
+// of steps. Kept long to spare the NVS flash (writes are skipped when unchanged).
+#define STEP_PERSIST_INTERVAL 300000UL  // ms (5 min)
+
 // Sync
 #define HISTORY_BATCH    20      // measurements per packet; 20*8+4 = 164 B, fits the 185 MTU
 #define SYNC_ACK_TIMEOUT 5000UL  // ms without an ACK -> resend the packet (nothing was dropped)

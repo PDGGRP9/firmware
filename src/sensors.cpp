@@ -159,3 +159,35 @@ void SensorManager::sampleMotion() {
 #endif
 }
 
+// ==================== DAILY STEP PERSISTENCE ====================
+int32_t SensorManager::restoreSteps() {
+    // Kept open for the lifetime of the object, like Storage's own handle.
+    stepPrefs_.begin(STEP_PREFS_NAMESPACE, false);
+    stepCounter = stepPrefs_.getUInt("steps", 0);
+    int32_t day = stepPrefs_.getInt("day", INT32_MIN);
+    lastPersistedSteps_ = stepCounter;
+    lastPersistedDay_ = day;
+
+    Serial.print("[SensorManager] Restored ");
+    Serial.print(stepCounter);
+    Serial.print(" steps (day=");
+    Serial.print(day);
+    Serial.println(")");
+    return day;
+}
+
+void SensorManager::persistSteps(int32_t localDay) {
+    if (stepCounter == lastPersistedSteps_ && localDay == lastPersistedDay_) return;
+
+    stepPrefs_.putUInt("steps", stepCounter);
+    stepPrefs_.putInt("day", localDay);
+    lastPersistedSteps_ = stepCounter;
+    lastPersistedDay_ = localDay;
+
+    Serial.print("[SensorManager] Persisted ");
+    Serial.print(stepCounter);
+    Serial.print(" steps (day=");
+    Serial.print(localDay);
+    Serial.println(")");
+}
+
